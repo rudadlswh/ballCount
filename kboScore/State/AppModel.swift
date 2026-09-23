@@ -308,7 +308,6 @@ final class AppModel {
     private var recentlyReconciledScheduleDates: [String: Date] = [:]
     private let scheduleReconciliationCooldown: TimeInterval = 120
     private(set) var schedulePostReconciliationRefreshGeneration = 0
-    private var scheduleStartupSyncState: ScheduleStartupSyncState = .notStarted
     private var scheduleCalendarDaysCache: [ScheduleCalendarCacheKey: [MyTeamCalendarDay]] = [:]
     private var scheduleGamesByDayCache: [ScheduleCalendarCacheKey: [String: [GameDetail]]] = [:]
     private var localStandingsProbabilitySignalsByTeamID: [String: LocalStandingsProbabilitySignal] = [:]
@@ -4124,95 +4123,6 @@ final class AppModel {
         #endif
     }
 
-    // runStartupScheduleCountCheckIfNeeded 메서드는 이 타입의 주요 동작을 수행합니다.
-    private func runStartupScheduleCountCheckIfNeeded() async {
-        switch scheduleStartupSyncState {
-        case .completed:
-            #if DEBUG
-            print("[ScheduleSync] startupCountCheck skipped state=completed")
-            #endif
-            return
-        case .failedButDoNotRetryAutomatically:
-            #if DEBUG
-            print("[ScheduleSync] startupCountCheck skipped state=failedButDoNotRetryAutomatically")
-            #endif
-            return
-        case .inFlight(let task):
-            #if DEBUG
-            print("[ScheduleSync] startupCountCheck source=inFlight awaitingExistingSync")
-            #endif
-            await task.value
-            return
-        case .notStarted:
-            break
-        }
-
-        guard let scheduleSyncRepository = repository as? any KBOScheduleRemoteSyncDataSource else {
-            #if DEBUG
-            print("[ScheduleSync] startupCountCheck unsupported=true usingLocalOnly")
-            #endif
-            scheduleStartupSyncState = .completed
-            return
-        }
-
-        #if DEBUG
-        print("[ScheduleSync] startupCountCheck start")
-        #endif
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.performStartupScheduleCountCheck(repository: scheduleSyncRepository)
-        }
-        scheduleStartupSyncState = .inFlight(task)
-        await task.value
-    }
-
-    // performStartupScheduleCountCheck 메서드는 비동기 작업이나 시스템 연동 흐름을 제어합니다.
-    private func performStartupScheduleCountCheck(
-        repository scheduleSyncRepository: any KBOScheduleRemoteSyncDataSource
-    ) async {
-        do {
-            let localGames = mergeEquivalentGames(games)
-            let localCount = localGames.count
-            let remoteCount = try await scheduleSyncRepository.fetchRemoteGameCount()
-            #if DEBUG
-            print("[ScheduleSync] localCount=\(localCount) remoteCount=\(remoteCount)")
-            #endif
-
-            guard localCount != remoteCount else {
-                #if DEBUG
-                print("[ScheduleSync] countsEqual=true usingLocalOnly")
-                print("[ScheduleSync] startupCountCheck completed")
-                #endif
-                scheduleStartupSyncState = .completed
-                return
-            }
-
-            #if DEBUG
-            print("[ScheduleSync] countsDiffer=true syncingMissingGames")
-            #endif
-            let previousKnownGames = allKnownGames()
-            let result = try await scheduleSyncRepository.fetchMissingScheduleGames(excludingKnownGames: localGames)
-            let upsertResult = upsertScheduleGamesIntoLocalStore(result.games, source: .startupSync)
-            await refreshLoadedScheduleMonthsFromLocalStore(reason: "startupSyncLocalStoreRefresh")
-            scheduleStartupSyncState = .completed
-            #if DEBUG
-            print(
-                "[ScheduleSync] missingGamesFetched=\(result.games.count) inserted=\(upsertResult.inserted) " +
-                "skippedExisting=\(upsertResult.skippedExisting) localCount=\(localCount) remoteCount=\(remoteCount)"
-            )
-            print("[ScheduleSync] startupCountCheck completed")
-            #endif
-            await notifyCancellationTransitions(previousGames: previousKnownGames, updatedGames: allKnownGames())
-            await notifyGameContentTransitions(previousGames: previousKnownGames, updatedGames: allKnownGames())
-            await syncFavoriteTeamWidgetSnapshot(includePrefetch: false)
-        } catch {
-            scheduleStartupSyncState = .failedButDoNotRetryAutomatically
-            #if DEBUG
-            print("[ScheduleSync] startupCountCheck failed usingLocalOnly error=\(error)")
-            #endif
-        }
-    }
-
     // refreshTodayGamesFromSupabase 메서드는 최신 상태를 다시 가져오고 관련 화면 데이터를 동기화합니다.
     private func refreshTodayGamesFromSupabase(
         for date: Date,
@@ -4715,7 +4625,6 @@ final class AppModel {
         monthlyScheduleRefreshDayKeys = [:]
         monthlyScheduleDecisionLogKeys = [:]
         inFlightScheduleMonthTasks = [:]
-        scheduleStartupSyncState = .notStarted
         invalidateScheduleDerivedCaches()
     }
 
@@ -6266,14 +6175,6 @@ private struct ScheduleCalendarCacheKey: Hashable {
     let month: KBOMonthScheduleKey
     let filter: ScheduleFilter
     let favoriteTeamID: String?
-}
-
-// ScheduleStartupSyncState 열거형는 화면이나 도메인 흐름에서 사용하는 상태 값을 표현합니다.
-private enum ScheduleStartupSyncState {
-    case notStarted
-    case inFlight(Task<Void, Never>)
-    case completed
-    case failedButDoNotRetryAutomatically
 }
 
 private extension GameDetail {
