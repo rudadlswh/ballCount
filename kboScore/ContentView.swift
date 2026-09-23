@@ -132,9 +132,6 @@ private struct AppTabContainerStyleModifier: ViewModifier {
                 // Temporarily disabled so stadium mode falls back to the system TabView tab bar.
                 // StadiumBottomNavigationBar(selection: $selection, palette: stadiumPalette)
             }
-            .overlay(alignment: .topTrailing) {
-                StadiumNotificationChromeOverlay(palette: stadiumPalette)
-            }
         } else {
             content
                 .tint(defaultAccent)
@@ -238,26 +235,6 @@ private struct StadiumBottomNavigationBar: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
         }
-    }
-}
-
-// StadiumNotificationChromeOverlay 구조체는 StadiumNotificationChromeOverlay 타입의 역할과 값을 정의합니다.
-private struct StadiumNotificationChromeOverlay: View {
-    let palette: StadiumPalette
-
-    var body: some View {
-        GeometryReader { proxy in
-            VStack {
-                HStack {
-                    Spacer()
-                    StadiumNotificationChromeButton(palette: palette)
-                        .padding(.trailing, 16)
-                }
-                Spacer()
-            }
-            .padding(.top, max(50, proxy.safeAreaInsets.top + 7))
-        }
-        .ignoresSafeArea()
     }
 }
 

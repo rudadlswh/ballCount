@@ -27,10 +27,10 @@ struct StandingsView: View {
                         startPoint: .top,
                         endPoint: .bottom
                     )
-                    .ignoresSafeArea(edges: .bottom)
+                    .ignoresSafeArea()
                 } else {
                     KBOLivePalette.background
-                        .ignoresSafeArea(edges: .bottom)
+                        .ignoresSafeArea()
                 }
             }
             .navigationTitle("순위")
@@ -99,20 +99,49 @@ struct StandingsView: View {
             let metrics = StandingsTableMetrics(width: proxy.size.width)
             let leaderSnapshot = rows.first
 
-            VStack(spacing: 5) {
-                StandingsTableHeader(metrics: metrics)
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 5) {
+                    StandingsTableHeader(metrics: metrics)
 
-                LazyVStack(spacing: 5) {
-                    ForEach(rows) { snapshot in
-                        StandingsRowView(
-                            snapshot: snapshot,
-                            leaderSnapshot: leaderSnapshot,
-                            favoriteTeamID: favoriteTeamID,
-                            metrics: metrics
-                        )
-                        .id(StandingsRowRenderIdentity(snapshot: snapshot))
+                    LazyVStack(spacing: 5) {
+                        ForEach(rows) { snapshot in
+                            StandingsRowView(
+                                snapshot: snapshot,
+                                leaderSnapshot: leaderSnapshot,
+                                favoriteTeamID: favoriteTeamID,
+                                metrics: metrics
+                            )
+                            .id(StandingsRowRenderIdentity(snapshot: snapshot))
+                        }
                     }
                 }
+
+                HStack(spacing: 0) {
+                    Color.clear
+                        .frame(width: metrics.pinnedWidth)
+                        .allowsHitTesting(false)
+
+                    ScrollView(.horizontal) {
+                        VStack(spacing: 5) {
+                            StandingsStatsHeader(metrics: metrics)
+
+                            LazyVStack(spacing: 5) {
+                                ForEach(rows) { snapshot in
+                                    StandingsStatsRow(
+                                        snapshot: snapshot,
+                                        leaderSnapshot: leaderSnapshot,
+                                        favoriteTeamID: favoriteTeamID,
+                                        metrics: metrics
+                                    )
+                                }
+                            }
+                        }
+                        .frame(width: metrics.statsContentWidth)
+                    }
+                    .frame(width: max(0, proxy.size.width - metrics.pinnedWidth))
+                    .accessibilityIdentifier("standingsStatsScroll")
+                }
+                .frame(width: proxy.size.width)
             }
             .id(revision)
         }
@@ -140,6 +169,21 @@ private struct StandingsTableHeader: View {
                 .frame(width: metrics.rankMovementWidth)
             Text("팀")
                 .frame(width: metrics.teamColumnWidth, alignment: .leading)
+        }
+        .font(.system(size: metrics.fontSize, weight: .bold))
+        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+        .padding(.leading, metrics.horizontalPadding)
+        .frame(height: 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StandingsStatsHeader: View {
+    @Environment(AppModel.self) private var appModel
+    let metrics: StandingsTableMetrics
+
+    var body: some View {
+        HStack(spacing: metrics.spacing) {
             headerLabel("경기", width: metrics.gamesWidth)
             headerLabel("승", width: metrics.countWidth)
             headerLabel("패", width: metrics.countWidth)
@@ -148,9 +192,9 @@ private struct StandingsTableHeader: View {
             headerLabel("게임차", width: metrics.gamesBehindWidth)
             headerLabel("연속", width: metrics.streakWidth)
         }
-        .font(.caption2.weight(.bold))
+        .font(.system(size: metrics.fontSize, weight: .bold))
         .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-        .padding(.horizontal, metrics.horizontalPadding)
+        .padding(.trailing, metrics.horizontalPadding)
         .frame(height: 18)
     }
 
@@ -158,7 +202,6 @@ private struct StandingsTableHeader: View {
     private func headerLabel(_ title: String, width: CGFloat) -> some View {
         Text(title)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
             .frame(width: width, alignment: .trailing)
     }
 }
@@ -186,15 +229,8 @@ private struct StandingsRowView: View {
             HStack(spacing: metrics.spacing) {
                 rankCell
                 teamCell
-                StandingsColumnValue(value: "\(snapshot.gamesPlayed)", width: metrics.gamesWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: "\(snapshot.wins)", width: metrics.countWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: "\(snapshot.losses)", width: metrics.countWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: "\(snapshot.ties)", width: metrics.countWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: snapshot.broadcastWinPercentageText, width: metrics.percentageWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: snapshot.gamesBehindText(leader: leaderSnapshot), width: metrics.gamesBehindWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: snapshot.currentStreakText, width: metrics.streakWidth, isFavorite: isFavorite)
             }
-            .padding(.horizontal, metrics.horizontalPadding)
+            .padding(.leading, metrics.horizontalPadding)
         }
         .frame(height: metrics.rowHeight)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -209,7 +245,7 @@ private struct StandingsRowView: View {
     private var rankCell: some View {
         HStack(spacing: 2) {
             Text("\(snapshot.rank)")
-                .font(isFavorite ? Font.subheadline.weight(.black) : Font.subheadline.weight(.heavy))
+                .font(.system(size: metrics.fontSize, weight: isFavorite ? .black : .heavy))
                 .monospacedDigit()
                 .foregroundStyle(Color.white.opacity(isFavorite ? 1 : 0.94))
                 .lineLimit(1)
@@ -218,7 +254,7 @@ private struct StandingsRowView: View {
                 .frame(width: metrics.rankWidth, alignment: .trailing)
 
             Text(rankMovement.displayText)
-                .font(.caption2.weight(.black))
+                .font(.system(size: metrics.fontSize, weight: .black))
                 .monospacedDigit()
                 .foregroundStyle(rankMovementColor)
                 .lineLimit(1)
@@ -232,7 +268,7 @@ private struct StandingsRowView: View {
     private var teamCell: some View {
         HStack(spacing: 0) {
             Text(teamName)
-                .font(.system(size: 15, weight: isFavorite ? .black : .bold, design: .default))
+                .font(.system(size: metrics.fontSize, weight: isFavorite ? .black : .bold))
                 .foregroundStyle(Color.white.opacity(isFavorite ? 1 : 0.96))
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -311,15 +347,40 @@ private struct StandingsRowView: View {
 #endif
 }
 
+private struct StandingsStatsRow: View {
+    let snapshot: TeamStandingsSnapshot
+    let leaderSnapshot: TeamStandingsSnapshot?
+    let favoriteTeamID: String?
+    let metrics: StandingsTableMetrics
+
+    var body: some View {
+        let isFavorite = snapshot.team.id == favoriteTeamID
+
+        HStack(spacing: metrics.spacing) {
+            StandingsColumnValue(value: "\(snapshot.gamesPlayed)", width: metrics.gamesWidth, isFavorite: isFavorite, fontSize: metrics.fontSize)
+            StandingsColumnValue(value: "\(snapshot.wins)", width: metrics.countWidth, isFavorite: isFavorite, fontSize: metrics.fontSize)
+            StandingsColumnValue(value: "\(snapshot.losses)", width: metrics.countWidth, isFavorite: isFavorite, fontSize: metrics.fontSize)
+            StandingsColumnValue(value: "\(snapshot.ties)", width: metrics.countWidth, isFavorite: isFavorite, fontSize: metrics.fontSize)
+            StandingsColumnValue(value: snapshot.broadcastWinPercentageText, width: metrics.percentageWidth, isFavorite: isFavorite, fontSize: metrics.fontSize)
+            StandingsColumnValue(value: snapshot.gamesBehindText(leader: leaderSnapshot), width: metrics.gamesBehindWidth, isFavorite: isFavorite, fontSize: metrics.fontSize)
+            StandingsColumnValue(value: snapshot.currentStreakText, width: metrics.streakWidth, isFavorite: isFavorite, fontSize: metrics.fontSize)
+        }
+        .padding(.trailing, metrics.horizontalPadding)
+        .frame(height: metrics.rowHeight)
+        .accessibilityHidden(true)
+    }
+}
+
 // StandingsColumnValue 구조체는 StandingsColumnValue 타입의 역할과 값을 정의합니다.
 private struct StandingsColumnValue: View {
     let value: String
     let width: CGFloat
     let isFavorite: Bool
+    let fontSize: CGFloat
 
     var body: some View {
         Text(value)
-            .font(.callout.weight(isFavorite ? .bold : .semibold))
+            .font(.system(size: fontSize, weight: isFavorite ? .bold : .semibold))
             .monospacedDigit()
             .foregroundStyle(Color.white.opacity(isFavorite ? 1 : 0.92))
             .lineLimit(1)

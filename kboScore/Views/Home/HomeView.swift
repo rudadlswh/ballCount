@@ -31,10 +31,10 @@ struct HomeView: View {
                         startPoint: .top,
                         endPoint: .bottom
                     )
-                    .ignoresSafeArea(edges: .bottom)
+                    .ignoresSafeArea()
                 } else {
                     KBOLivePalette.background
-                        .ignoresSafeArea(edges: .bottom)
+                        .ignoresSafeArea()
                 }
             }
 //            .navigationTitle("KBO LIVE")

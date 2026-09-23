@@ -130,15 +130,18 @@ private struct NotificationsToolbarButtonModifier: ViewModifier {
 
     // body 메서드는 SwiftUI 화면의 본문 구성을 반환합니다.
     func body(content: Content) -> some View {
-        if appModel.isStadiumFavoriteSelected {
-            content
-        } else {
-            content
-                .toolbar {
+        content
+            .toolbar {
+                if let palette = appModel.favoriteStadiumPalette {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        StadiumNotificationChromeButton(palette: palette)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
                     ToolbarItem(placement: .topBarTrailing) {
                         NotificationsToolbarButton()
                     }
                 }
-        }
+            }
     }
 }
