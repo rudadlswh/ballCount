@@ -22,12 +22,23 @@ nonisolated struct ServerSentEvent: Equatable, Sendable {
     var id: String?
 }
 
+nonisolated enum ServerSentEventParserError: Error, Equatable {
+    case eventTooLarge
+}
+
 nonisolated struct ServerSentEventParser: Sendable {
+    static let maximumEventDataBytes = 1_048_576
+    private static let maximumEventDataLines = 4_096
+
     private var eventName: String?
     private var dataLines: [String] = []
     private var eventID: String?
+    private var dataByteCount = 0
+    private var dataStartsWithJSONObject = false
+    private var dataEndsWithJSONObject = false
+    private var hasJSONContent = false
 
-    mutating func parse(line: String) -> [ServerSentEvent] {
+    mutating func parse(line: String) throws -> [ServerSentEvent] {
         let normalizedLine = line.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
         guard normalizedLine.isEmpty == false else {
             return flush().map { [$0] } ?? []
@@ -55,7 +66,22 @@ nonisolated struct ServerSentEventParser: Sendable {
                 events.append(heartbeat)
             }
         case "data":
+            let addedByteCount = value.utf8.count + (dataLines.isEmpty ? 0 : 1)
+            guard dataLines.count < Self.maximumEventDataLines,
+                  addedByteCount <= Self.maximumEventDataBytes - dataByteCount else {
+                reset()
+                throw ServerSentEventParserError.eventTooLarge
+            }
+            dataByteCount += addedByteCount
             dataLines.append(value)
+            let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedValue.isEmpty == false {
+                if hasJSONContent == false {
+                    dataStartsWithJSONObject = trimmedValue.hasPrefix("{")
+                    hasJSONContent = true
+                }
+                dataEndsWithJSONObject = trimmedValue.hasSuffix("}")
+            }
             if isCompleteJSONDataMessage, let event = flush() {
                 events.append(event)
             }
@@ -71,11 +97,7 @@ nonisolated struct ServerSentEventParser: Sendable {
         guard eventName != nil || dataLines.isEmpty == false || eventID != nil else {
             return nil
         }
-        defer {
-            eventName = nil
-            dataLines.removeAll()
-            eventID = nil
-        }
+        defer { reset() }
         return ServerSentEvent(
             event: eventName,
             data: dataLines.joined(separator: "\n"),
@@ -89,8 +111,17 @@ nonisolated struct ServerSentEventParser: Sendable {
 
     private var isCompleteJSONDataMessage: Bool {
         guard eventName == "snapshot" || eventName == "status_changed" else { return false }
-        let data = dataLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return data.hasPrefix("{") && data.hasSuffix("}")
+        return dataStartsWithJSONObject && dataEndsWithJSONObject
+    }
+
+    private mutating func reset() {
+        eventName = nil
+        dataLines.removeAll()
+        eventID = nil
+        dataByteCount = 0
+        dataStartsWithJSONObject = false
+        dataEndsWithJSONObject = false
+        hasJSONContent = false
     }
 }
 
@@ -267,7 +298,7 @@ struct BackendGameLiveStreamClient: GameLiveStreaming {
                             var parser = ServerSentEventParser()
                             for try await line in bytes.lines {
                                 try Task.checkCancellation()
-                                for rawEvent in parser.parse(line: line) {
+                                for rawEvent in try parser.parse(line: line) {
                                     await watchdog.record(eventName: rawEvent.event)
                                     if let event = try Self.decode(rawEvent) {
                                         continuation.yield(event)

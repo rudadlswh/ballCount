@@ -21,8 +21,8 @@ struct kboScoreTests {
     // sseParserParsesSnapshotMessage 메서드는 SSE event/data/blank-line 형식의 snapshot 메시지를 해석하는지 검증합니다.
     @Test func sseParserParsesSnapshotMessage() throws {
         var parser = ServerSentEventParser()
-        #expect(parser.parse(line: "event:snapshot\r").isEmpty)
-        let events = parser.parse(line: #"data:{"publicGameId":"20260708-LOT-KIA","rawHash":"hash-1"}"#)
+        #expect(try parser.parse(line: "event:snapshot\r").isEmpty)
+        let events = try parser.parse(line: #"data:{"publicGameId":"20260708-LOT-KIA","rawHash":"hash-1"}"#)
         #expect(events == [
             ServerSentEvent(
                 event: "snapshot",
@@ -30,14 +30,26 @@ struct kboScoreTests {
                 id: nil
             )
         ])
-        #expect(parser.parse(line: "\r").isEmpty)
+        #expect(try parser.parse(line: "\r").isEmpty)
     }
 
     // sseParserParsesHeartbeatMessage 메서드는 heartbeat 이벤트를 데이터 없이도 즉시 해석하는지 검증합니다.
     @Test func sseParserParsesHeartbeatMessage() throws {
         var parser = ServerSentEventParser()
-        let events = parser.parse(line: "event:heartbeat\r")
+        let events = try parser.parse(line: "event:heartbeat\r")
         #expect(events == [ServerSentEvent(event: "heartbeat", data: "", id: nil)])
+    }
+
+    @Test func sseParserRejectsOversizedEvent() throws {
+        var parser = ServerSentEventParser()
+        _ = try parser.parse(line: "event:snapshot")
+
+        #expect(throws: ServerSentEventParserError.eventTooLarge) {
+            try parser.parse(
+                line: "data:" + String(repeating: "x", count: ServerSentEventParser.maximumEventDataBytes + 1)
+            )
+        }
+        #expect(parser.flush() == nil)
     }
 
     // homeSortingPrioritizesFavoriteTeamLiveGame 메서드는 이 타입의 주요 동작을 수행합니다.
