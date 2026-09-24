@@ -50,27 +50,31 @@ struct NotificationsView: View {
                     } else {
                         LazyVStack(spacing: 8) {
                             ForEach(appModel.filteredNotifications) { item in
-                                if let gameIdentity = item.preferredGameNavigationIdentity {
-                                    NavigationLink {
-                                        GameDetailView(gameIdentity: gameIdentity)
-                                            .task {
-                                                appModel.markNotificationRead(item.id)
-                                            }
-                                    } label: {
-                                        NotificationCardView(item: item)
+                                NotificationSwipeToDeleteRow {
+                                    appModel.deleteNotification(item.id)
+                                } content: {
+                                    if let gameIdentity = item.preferredGameNavigationIdentity {
+                                        NavigationLink {
+                                            GameDetailView(gameIdentity: gameIdentity)
+                                                .task {
+                                                    appModel.markNotificationRead(item.id)
+                                                }
+                                        } label: {
+                                            NotificationCardView(item: item)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .simultaneousGesture(TapGesture().onEnded {
+                                            _ = appModel.notificationGameDetailNavigationIdentity(for: item)
+                                        })
+                                    } else {
+                                        Button {
+                                            _ = appModel.notificationGameDetailNavigationIdentity(for: item)
+                                            appModel.markNotificationRead(item.id)
+                                        } label: {
+                                            NotificationCardView(item: item)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
-                                    .simultaneousGesture(TapGesture().onEnded {
-                                        _ = appModel.notificationGameDetailNavigationIdentity(for: item)
-                                    })
-                                } else {
-                                    Button {
-                                        _ = appModel.notificationGameDetailNavigationIdentity(for: item)
-                                        appModel.markNotificationRead(item.id)
-                                    } label: {
-                                        NotificationCardView(item: item)
-                                    }
-                                    .buttonStyle(.plain)
                                 }
                             }
                         }
@@ -99,6 +103,45 @@ struct NotificationsView: View {
 
     private var notificationPalette: StadiumPalette {
         appModel.favoriteStadiumPalette ?? .doosan
+    }
+}
+
+private struct NotificationSwipeToDeleteRow<Content: View>: View {
+    let onDelete: () -> Void
+    @ViewBuilder let content: Content
+    @State private var isRevealed = false
+    @State private var dragOffset: CGFloat = 0
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(role: .destructive, action: onDelete) {
+                Label("삭제", systemImage: "trash")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 76)
+                    .frame(maxHeight: .infinity)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 16))
+
+            content
+                .offset(x: max(-76, min(0, (isRevealed ? -76 : 0) + dragOffset)))
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 20)
+                        .onChanged { value in
+                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                            dragOffset = value.translation.width
+                        }
+                        .onEnded { value in
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                isRevealed = value.translation.width < -40 ||
+                                    (isRevealed && value.translation.width < 40)
+                                dragOffset = 0
+                            }
+                        }
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 

@@ -239,6 +239,7 @@ final class AppModel {
     private(set) var standingsRowsRevision = 0
     private(set) var homeFavoriteTeamGames: [GameDetail] = []
     var notifications: [NotificationItem] = []
+    private var deletedNotificationIDs: Set<UUID> = []
     var selectedTab: AppTab = .home
     var presentedGameIdentity: String?
     var isNotificationsPresented = false
@@ -359,6 +360,7 @@ final class AppModel {
         let persistedOnboardingCompletion = usePersistedSettings ? AppModelPersistenceStore.loadOnboardingCompletion() : nil
         let persistedDeviceToken = usePersistedSettings ? AppModelPersistenceStore.loadDeviceToken() : nil
         let persistedNotificationHistory = usePersistedSettings ? AppModelPersistenceStore.loadNotificationHistory() : []
+        let persistedDeletedNotificationIDs = usePersistedSettings ? AppModelPersistenceStore.loadDeletedNotificationIDs() : []
         let persistedCancellationNotificationKeys = usePersistedSettings ? AppModelPersistenceStore.loadCancellationNotificationKeys() : []
         let hasPersistedFavoriteTeam = Self.canonicalTeamIdentifier(persistedSettings?.favoriteTeamID) != nil
         let initialHasCompletedOnboarding: Bool
@@ -401,7 +403,8 @@ final class AppModel {
         self.liveActivitySupported = self.liveActivityController.isSupported
         self.notificationRegistrationSyncStatus = persistedDeviceToken == nil ? .waitingForToken : .idle
         self.isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        self.notifications = persistedNotificationHistory
+        self.deletedNotificationIDs = persistedDeletedNotificationIDs
+        self.notifications = persistedNotificationHistory.filter { !persistedDeletedNotificationIDs.contains($0.id) }
         FavoriteTeamScheduleWidgetShared.saveFavoriteTeamID(initialSettings.favoriteTeamID)
         if let bootstrap {
             apply(bootstrap)
@@ -3820,6 +3823,16 @@ final class AppModel {
         persistNotificationHistory()
     }
 
+    func deleteNotification(_ notificationID: UUID) {
+        guard notifications.contains(where: { $0.id == notificationID }) else { return }
+        deletedNotificationIDs.insert(notificationID)
+        notifications.removeAll { $0.id == notificationID }
+        persistNotificationHistory()
+        if usesPersistedSettings {
+            AppModelPersistenceStore.saveDeletedNotificationIDs(deletedNotificationIDs)
+        }
+    }
+
     // notificationGameDetailNavigationIdentity 메서드는 이 타입의 주요 동작을 수행합니다.
     func notificationGameDetailNavigationIdentity(for item: NotificationItem) -> String? {
         let selectedIdentity = item.preferredGameNavigationIdentity
@@ -5361,7 +5374,9 @@ final class AppModel {
             byID[item.id] = item
         }
         for item in incoming {
-            byID[item.id] = item
+            if !deletedNotificationIDs.contains(item.id) {
+                byID[item.id] = item
+            }
         }
         return byID.values.sorted { $0.sentAt > $1.sentAt }
     }
@@ -5395,6 +5410,7 @@ final class AppModel {
     private func recordReceivedNotification(_ payload: ScoreNotificationPayload) {
         let receivedAt = currentDateProvider()
         let item = NotificationHistoryBuilder.makeItem(from: payload, receivedAt: receivedAt)
+        guard !deletedNotificationIDs.contains(item.id) else { return }
         notifications.insert(item, at: 0)
         notifications = notifications.sorted { $0.sentAt > $1.sentAt }
         persistNotificationHistory()
