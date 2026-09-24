@@ -16,6 +16,7 @@ enum AppModelPersistenceStore {
     private static let settingsStorageKey = "kbo_live_app_settings"
     private static let deviceTokenStorageKey = "kbo_live_apns_device_token"
     private static let notificationHistoryStorageKey = "kbo_live_notification_history"
+    private static let deletedNotificationIDsStorageKey = "kbo_live_deleted_notification_ids"
     private static let attendedGamesStorageKey = "kbo_live_attended_game_keys"
     private static let cancellationNotificationStorageKey = "kbo_live_cancellation_notification_keys"
     private static let onboardingCompletionStorageKey = "kbo_live_onboarding_completed"
@@ -56,6 +57,14 @@ enum AppModelPersistenceStore {
             return []
         }
         return decoded.sorted { $0.sentAt > $1.sentAt }
+    }
+
+    static func saveDeletedNotificationIDs(_ ids: Set<UUID>) {
+        UserDefaults.standard.set(ids.map(\.uuidString), forKey: deletedNotificationIDsStorageKey)
+    }
+
+    static func loadDeletedNotificationIDs() -> Set<UUID> {
+        Set((UserDefaults.standard.stringArray(forKey: deletedNotificationIDsStorageKey) ?? []).compactMap(UUID.init(uuidString:)))
     }
 
     // saveAttendedGameKeys 메서드는 전달된 값을 반영하고 내부 저장 상태를 갱신합니다.

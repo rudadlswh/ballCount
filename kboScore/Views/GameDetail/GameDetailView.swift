@@ -134,10 +134,17 @@ struct GameDetailView: View {
                 )
             }
             await Task.yield()
-            let refreshedGame = await viewModel.refreshIfNeeded(
-                appModel: appModel,
-                bypassAutomaticThrottle: true
-            ) ?? viewModel.game
+            // Ended games already have a schedule snapshot. Avoid a network round trip
+            // before presenting their detail; record and boxscore loads run separately.
+            let refreshedGame: GameDetail?
+            if let initialGame = viewModel.game, initialGame.status.isFinishedLike {
+                refreshedGame = initialGame
+            } else {
+                refreshedGame = await viewModel.refreshIfNeeded(
+                    appModel: appModel,
+                    bypassAutomaticThrottle: true
+                ) ?? viewModel.game
+            }
             if let refreshedGame {
                 await loadDetailPresentation(
                     for: refreshedGame,
@@ -147,8 +154,10 @@ struct GameDetailView: View {
                     rawSupabasePublicGameID: viewModel.rawSupabasePublicGameID,
                     forceRefresh: refreshedGame.shouldPollGameDetail(now: Date())
                 )
-                await appModel.startOrUpdateLiveActivityIfNeeded(for: refreshedGame)
-                await appModel.startLiveGameDetailPolling(gameIdentity: refreshedGame.stableDetailIdentity)
+                if refreshedGame.shouldPollGameDetail(now: Date()) {
+                    await appModel.startOrUpdateLiveActivityIfNeeded(for: refreshedGame)
+                    await appModel.startLiveGameDetailPolling(gameIdentity: refreshedGame.stableDetailIdentity)
+                }
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
