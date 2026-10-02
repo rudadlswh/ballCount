@@ -65,7 +65,7 @@ struct SettingsView: View {
                                 Spacer()
                                 Text(appModel.notificationAuthorizationStatus.rawValue).font(.caption).foregroundStyle(StadiumPalette.app.tint)
                                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
-                            }.frame(minHeight: 44)
+                            }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                         Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1)
                         HStack {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationStack {
@@ -98,12 +99,15 @@ struct HomeView: View {
                     Spacer()
                     Text("전체 순위  ›").font(.caption.weight(.semibold)).foregroundStyle(StadiumPalette.app.tint)
                 }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }.buttonStyle(.plain)
-            HStack {
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 16)) : AnyLayout(HStackLayout())
+            layout {
                 AppMetric(value: "\(snapshot.rank)위", label: "리그 순위", highlighted: true)
-                Divider().frame(height: 44)
+                if !dynamicTypeSize.isAccessibilitySize { Divider().frame(height: 44) }
                 AppMetric(value: snapshot.winPercentageText, label: "승률")
-                Divider().frame(height: 44)
+                if !dynamicTypeSize.isAccessibilitySize { Divider().frame(height: 44) }
                 AppMetric(value: snapshot.currentStreakText, label: "최근 흐름")
             }.cardSurface(padding: 16)
         }
@@ -125,6 +129,7 @@ struct HomeView: View {
 private struct HomeHeroGameCard: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .largeTitle) private var scoreSize = 61.0
     let summary: GameSummary
     let palette: StadiumPalette
 
@@ -176,7 +181,7 @@ private struct HomeHeroGameCard: View {
         .foregroundStyle(palette.textPrimary)
         .cardSurface(padding: 16, cornerRadius: 22)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(HomeHeroGamePresentation.accessibilityLabel(for: summary)), 점수 \(summary.awayScore.map(String.init) ?? "미정") 대 \(summary.homeScore.map(String.init) ?? "미정")")
+        .accessibilityLabel(HomeHeroGamePresentation.accessibilityLabel(for: summary))
         .accessibilityHint("경기 상세 정보를 엽니다")
     }
 
@@ -185,16 +190,17 @@ private struct HomeHeroGameCard: View {
     }
 
     private var countIndicators: some View {
-        HStack(spacing: 8) {
-            count("B", value: summary.balls, total: 3, color: Color(red: 84/255, green: 129/255, blue: 107/255))
-            count("S", value: summary.strikes, total: 2, color: Color(red: 184/255, green: 141/255, blue: 48/255))
-            count("O", value: summary.outs, total: 2, color: palette.tint)
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        return layout {
+            count("B", value: KBOCountDisplay.balls(summary.balls), total: 3, color: Color(red: 84/255, green: 129/255, blue: 107/255))
+            count("S", value: KBOCountDisplay.strikes(summary.strikes), total: 2, color: Color(red: 184/255, green: 141/255, blue: 48/255))
+            count("O", value: KBOCountDisplay.outs(summary.outs), total: 2, color: palette.tint)
         }
     }
 
     private func count(_ label: String, value: Int?, total: Int, color: Color) -> some View {
         HStack(spacing: 3) {
-            Text(label).font(.system(size: 10)).foregroundStyle(palette.textSecondary)
+            Text("\(label) \(value.map(String.init) ?? "–")").font(.caption2).foregroundStyle(palette.textSecondary)
             ForEach(0..<total, id: \.self) { i in
                 Circle().fill(i < (value ?? 0) ? color : palette.ghostBorder).frame(width: 4, height: 4)
             }
@@ -206,7 +212,7 @@ private struct HomeHeroGameCard: View {
             Text(team.identity.shortLabel).font(.headline)
             if summary.showsLiveOrFinalScore {
                 Text(score.map(String.init) ?? "–")
-                    .font(.system(size: 61, weight: .bold)).monospacedDigit()
+                    .font(.system(size: scoreSize, weight: .bold)).monospacedDigit()
                     .foregroundStyle(team.id == appModel.settings.favoriteTeamID ? palette.tint : palette.textPrimary)
             } else {
                 Text(HomeHeroGamePresentation.pitcherText(pitcher)).font(.subheadline).multilineTextAlignment(.center)

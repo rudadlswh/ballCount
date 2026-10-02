@@ -347,8 +347,9 @@ struct AppSegmentedControl<Value: Hashable>: View {
                     Text(option.1)
                         .font(.subheadline.weight(selection == option.0 ? .semibold : .regular))
                         .foregroundStyle(selection == option.0 ? StadiumPalette.app.textPrimary : StadiumPalette.app.textSecondary)
-                        .frame(maxWidth: .infinity, minHeight: 36)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                         .background(selection == option.0 ? StadiumPalette.app.elevatedCard : .clear, in: Capsule())
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selection == option.0 ? .isSelected : [])
@@ -381,11 +382,13 @@ struct AppMetric: View {
                 .font(.title2.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(highlighted ? StadiumPalette.app.tint : StadiumPalette.app.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Text(label).font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label), \(value)")
     }
 }
 

@@ -16,6 +16,7 @@ struct StandingsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .subheadline) private var tableTextScale = 1.0
+    @ScaledMetric(relativeTo: .largeTitle) private var rankSize = 36.0
 
     var body: some View {
         NavigationStack {
@@ -66,22 +67,24 @@ struct StandingsView: View {
     }
 
     private func favoriteSummary(_ snapshot: TeamStandingsSnapshot) -> some View {
-        HStack(alignment: .bottom) {
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .bottom))
+        return layout {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Text("MY TEAM").font(.system(size: 10, weight: .semibold))
+                let detailLayout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                detailLayout {
+                    Text("MY TEAM").font(.caption2.weight(.semibold))
                         .foregroundStyle(StadiumPalette.app.tint)
                         .padding(.horizontal, 10).padding(.vertical, 5)
                         .background(StadiumPalette.app.tabBarSelectionSurface, in: Capsule())
                     Text(snapshot.team.identity.displayName).font(.subheadline.weight(.semibold))
                 }
-                HStack(spacing: 12) {
+                detailLayout {
                     Text(snapshot.recordText).font(.headline)
                     Text(snapshot.currentStreakText).font(.caption.weight(.semibold)).foregroundStyle(StadiumPalette.app.tint)
                 }
             }
-            Spacer(minLength: 0)
-            Text("\(snapshot.rank)위").font(.system(size: 36, weight: .bold)).foregroundStyle(StadiumPalette.app.tint)
+            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            Text("\(snapshot.rank)위").font(.system(size: rankSize, weight: .bold)).foregroundStyle(StadiumPalette.app.tint)
         }.cardSurface(padding: 16)
     }
 
@@ -155,7 +158,7 @@ struct StandingsView: View {
         .cardSurface(padding: 4, cornerRadius: 18)
         .overlay(alignment: .bottomTrailing) {
             Text("← 기록을 옆으로 넘겨보세요 →")
-                .font(.system(size: 10)).foregroundStyle(StadiumPalette.app.textSecondary)
+                .font(.caption2).foregroundStyle(StadiumPalette.app.textSecondary)
                 .offset(y: 18)
         }
         .padding(.bottom, 18)

@@ -274,7 +274,7 @@ private struct FavoriteTeamScheduleCalendarView: View {
                 Text("갱신 " + snapshot.generatedAt.formatted(ScheduleWidgetDateFormat.updated))
                     .accessibilityLabel("업데이트 \(snapshot.generatedAt.formatted(ScheduleWidgetDateFormat.updated))")
             }
-            .font(.system(size: 10))
+            .font(.system(size: 11))
             .foregroundStyle(secondary)
         }
         .foregroundStyle(primary)
@@ -338,11 +338,10 @@ private struct FavoriteTeamScheduleDayCell: View {
             Text(opponent.isEmpty ? " " : opponent)
                 .font(.system(size: 11, weight: .semibold))
             Text(detail.isEmpty ? " " : detail)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(secondary)
         }
         .lineLimit(1)
-        .minimumScaleFactor(0.75)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             if day.isToday {

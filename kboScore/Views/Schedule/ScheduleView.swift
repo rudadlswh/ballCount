@@ -329,6 +329,7 @@ private struct ScheduleCalendarCardView: View {
                         dayMarker(for: day)
                     }
                     .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
                     .background(dayBackground(for: day), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -380,6 +381,7 @@ private struct ScheduleCalendarCardView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(appModel.favoriteStadiumPalette?.secondaryTint ?? appModel.currentTheme.accent)
                 .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
                 .background(
                     Color.clear,
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -395,11 +397,10 @@ private struct ScheduleCalendarCardView: View {
     private func dayMarker(for day: MyTeamCalendarDay) -> some View {
         if let opponentName = opponentMarkerText(for: day) {
             Text(opponentName)
-                .font(.system(size: 9))
+                .font(.caption2)
                 .foregroundStyle(markerColor(for: day))
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
-                .allowsTightening(true)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, minHeight: 18)
         } else if viewModel.scheduleFilter == .myTeam {
             Color.clear.frame(height: 18)
@@ -412,8 +413,8 @@ private struct ScheduleCalendarCardView: View {
 
                 if day.gameCount > 1 {
                     Text("\(day.gameCount)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(dayGameCountForegroundColor(for: day))
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(
@@ -422,7 +423,7 @@ private struct ScheduleCalendarCardView: View {
                         )
                 }
             }
-            .frame(height: 18)
+            .frame(minHeight: 18)
         }
     }
 
@@ -470,9 +471,9 @@ private struct ScheduleCalendarCardView: View {
             return Color.white
         }
         if let palette = appModel.favoriteStadiumPalette {
-            return day.isInDisplayedMonth ? palette.textPrimary : palette.textSecondary.opacity(0.6)
+            return day.isInDisplayedMonth ? palette.textPrimary : palette.textSecondary
         }
-        return day.isInDisplayedMonth ? .primary : .secondary.opacity(0.6)
+        return day.isInDisplayedMonth ? .primary : .secondary
     }
 
     // markerColor 메서드는 전달된 값을 반영하고 내부 저장 상태를 갱신합니다.
@@ -492,16 +493,18 @@ private struct ScheduleCalendarCardView: View {
     private func dayGameCountBadgeColor(for day: MyTeamCalendarDay) -> Color {
         switch dayResultAppearance(for: day) {
         case .win:
-            return KBOLivePalette.upcoming
+            return Color(red: 36 / 255, green: 95 / 255, blue: 168 / 255)
         case .loss:
-            return KBOLivePalette.live
-        case .draw:
-            return KBOLivePalette.final
-        case .neutral:
-            if let palette = appModel.favoriteStadiumPalette {
-                return palette.recessedSurface
-            }
-            return appModel.currentTheme.chipBackground
+            return StadiumPalette.app.primary
+        case .draw, .neutral:
+            return StadiumPalette.app.recessedSurface
+        }
+    }
+
+    private func dayGameCountForegroundColor(for day: MyTeamCalendarDay) -> Color {
+        switch dayResultAppearance(for: day) {
+        case .win, .loss: .white
+        case .draw, .neutral: StadiumPalette.app.textPrimary
         }
     }
 
@@ -529,7 +532,22 @@ private struct ScheduleCalendarCardView: View {
     private func dayAccessibilityLabel(for day: MyTeamCalendarDay) -> String {
         let dateText = day.date.formatted(.dateTime.month().day())
         let gameText = day.gameCount > 0 ? "경기 \(day.gameCount)개" : "경기 없음"
-        return day.hasAttendedGame ? "\(dateText), \(gameText), 직관 경기 있음" : "\(dateText), \(gameText)"
+        var parts = [dateText, gameText]
+        if day.isToday { parts.append("오늘") }
+        if viewModel.scheduleFilter == .myTeam, let opponent = day.opponentTeam {
+            parts.append("상대팀 \(opponent.displayName)")
+            if let isHome = day.favoriteTeamIsHome { parts.append(isHome ? "홈 경기" : "원정 경기") }
+            if let status = day.dominantStatus { parts.append(status.title) }
+            if let result = day.favoriteTeamResult {
+                switch result {
+                case .win: parts.append("승리")
+                case .loss: parts.append("패배")
+                case .tie: parts.append("무승부")
+                }
+            }
+        }
+        if day.hasAttendedGame { parts.append("직관 경기 있음") }
+        return parts.joined(separator: ", ")
     }
 
     private func dayNumberText(for date: Date) -> String {

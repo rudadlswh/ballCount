@@ -30,7 +30,7 @@ struct NotificationsToolbarButton: View {
 
                 notificationBadge(
                     count: appModel.unreadNotificationsCount,
-                    background: .red,
+                    background: StadiumPalette.app.primary,
                     xOffset: 10,
                     yOffset: -8
                 )
@@ -47,7 +47,7 @@ struct NotificationsToolbarButton: View {
 private func notificationBadge(count: Int, background: Color, xOffset: CGFloat, yOffset: CGFloat) -> some View {
     if count > 0 {
         Text(notificationBadgeText(for: count))
-            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .font(.caption2.weight(.bold))
             .foregroundStyle(.white)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)

@@ -1189,19 +1189,21 @@ private struct LiveSituationRow: View {
 // LiveSituationSummaryContent 구조체는 주자 상황과 카운트를 하나의 카드 안에 표시합니다.
 private struct LiveSituationSummaryContent: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let presentation: GameDetailPresentation
 
     var body: some View {
         let _ = presentation.logBaseRunnersBeforeRendering()
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 0) {
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16)) : AnyLayout(HStackLayout(spacing: 0))
+            layout {
                 GameDetailBasesDiamondView(
                     bases: presentation.liveSituation.bases,
                     tint: appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent,
                     borderTint: baseBorderTint
                 )
 
-                Spacer(minLength: 36)
+                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 36) }
 
                 CountDotsStack(
                     balls: KBOCountDisplay.balls(presentation.liveSituation.balls),
@@ -1243,6 +1245,8 @@ private struct GameDetailBasesDiamondView: View {
                 .offset(x: -25, y: 4)
         }
         .frame(width: 96, height: 74)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(HomeHeroGamePresentation.basesAccessibilityLabel(for: bases))
     }
 }
 
@@ -1275,10 +1279,12 @@ private struct GameDetailBaseMarker: View {
 
 // BaseRunnerGrid 구조체는 1루, 2루, 3루 주자 이름을 같은 폭의 3열로 표시합니다.
 private struct BaseRunnerGrid: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let runners: [BaseRunnerDisplayItem]
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+        return layout {
             ForEach(baseColumns, id: \.id) { column in
                 VStack(spacing: 4) {
                     Text(column.title)
@@ -1333,13 +1339,24 @@ private struct CountDotsRow: View {
             Text(label)
                 .font(.caption.weight(.heavy))
                 .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                .frame(width: 12, alignment: .leading)
+            Text(value == nil ? "–" : String(normalizedValue))
+                .font(.caption.monospacedDigit())
 
             ForEach(0..<maxValue, id: \.self) { index in
                 Circle()
                     .fill(index < normalizedValue ? tint : tint.opacity(0.18))
                     .frame(width: 8, height: 8)
             }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(countName) \(value == nil ? "정보 없음" : String(normalizedValue))")
+    }
+
+    private var countName: String {
+        switch label {
+        case "B": "볼"
+        case "S": "스트라이크"
+        default: "아웃"
         }
     }
 
