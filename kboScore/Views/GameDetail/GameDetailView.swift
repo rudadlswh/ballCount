@@ -97,21 +97,18 @@ struct GameDetailView: View {
         }
         .background {
             if let palette = appModel.favoriteStadiumPalette {
-                LinearGradient(
-                    colors: [palette.background, palette.sectionBackground],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                palette.background
                 .ignoresSafeArea()
             } else {
                 KBOLivePalette.background
             }
         }
         .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? Color.primary)
+        .toolbar(.visible, for: .navigationBar)
         .navigationTitle("경기 상세")
         .navigationBarTitleDisplayMode(.inline)
         .stadiumNavigationChrome(appModel.favoriteStadiumPalette)
-        .tint(appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.accent)
+        .tint(appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent)
         .task(id: viewModel.stableIdentity) {
             let initialRenderStartedAt = Date()
             if viewModel.game == nil {
@@ -405,7 +402,7 @@ struct GameDetailView: View {
                     palette?.elevatedCard ?? Color(.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                 )
-                .foregroundStyle(isAttended ? (palette?.primary ?? appModel.currentTheme.accent) : (palette?.textPrimary ?? .primary))
+                .foregroundStyle(isAttended ? (palette?.tint ?? appModel.currentTheme.accent) : (palette?.textPrimary ?? .primary))
                 .opacity(isAttendanceButtonDisabled ? 0.55 : 1)
             }
             .buttonStyle(.plain)
@@ -1045,12 +1042,13 @@ struct BaseRunnerDisplayItem: Identifiable, Equatable {
 // GameStatusSummaryCard 구조체는 GameStatusSummaryCard 타입의 역할과 값을 정의합니다.
 private struct GameStatusSummaryCard: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let presentation: GameDetailPresentation
 
     var body: some View {
         let palette = appModel.favoriteStadiumPalette
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
+            summaryLayout {
                 ScoreColumn(
                     title: "원정",
                     team: presentation.game.awayTeam,
@@ -1067,11 +1065,11 @@ private struct GameStatusSummaryCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if presentation.showsLiveOrFinalScore {
                         Text("\(presentation.displayAwayScore) : \(presentation.displayHomeScore)")
-                            .font(.system(size: 36, weight: .heavy, design: .rounded))
+                            .font(.largeTitle.weight(.bold))
                             .monospacedDigit()
                     } else {
                         Text(presentation.startTimeText ?? "TBD")
-                            .font(.system(size: 28, weight: .heavy, design: .rounded))
+                            .font(.title.weight(.bold))
                             .monospacedDigit()
                     }
 
@@ -1108,6 +1106,12 @@ private struct GameStatusSummaryCard: View {
         )
     }
 
+    private var summaryLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .center, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+    }
+
     private var statusTitle: String {
         presentation.inningText ?? presentation.status.title
     }
@@ -1137,7 +1141,7 @@ private struct ScoreColumn: View {
         VStack(spacing: 8) {
             Text(title)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(tint)
+                .foregroundStyle(.secondary)
             Text(team.displayName)
                 .font(.title3.weight(.heavy))
                 .lineLimit(2)
@@ -1193,7 +1197,7 @@ private struct LiveSituationSummaryContent: View {
             HStack(alignment: .center, spacing: 0) {
                 GameDetailBasesDiamondView(
                     bases: presentation.liveSituation.bases,
-                    tint: appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.accent,
+                    tint: appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent,
                     borderTint: baseBorderTint
                 )
 
@@ -1218,7 +1222,7 @@ private struct LiveSituationSummaryContent: View {
         case "kt", "lg":
             .white
         default:
-            appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.accent
+            appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent
         }
     }
 }
@@ -2459,7 +2463,7 @@ private struct DetailMessageCard: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(appModel.favoriteStadiumPalette?.primary ?? KBOLivePalette.primary)
+                .foregroundStyle(appModel.favoriteStadiumPalette?.tint ?? KBOLivePalette.primary)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {

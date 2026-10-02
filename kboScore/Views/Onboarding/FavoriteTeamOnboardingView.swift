@@ -93,17 +93,18 @@ struct FavoriteTeamOnboardingView: View {
                     }
                 }
 
-                Button("시작하기") {
+                Button {
                     guard let selectedTeamID else { return }
                     appModel.completeFavoriteTeamOnboarding(with: selectedTeamID)
+                } label: {
+                    Text("시작하기")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(appModel.currentTheme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .foregroundStyle(.white)
+                .buttonStyle(.borderedProminent)
+                .tint(KBOLivePalette.primary)
                 .disabled(selectedTeamID == nil)
-                .opacity(selectedTeamID == nil ? 0.45 : 1)
+                .accessibilityHint(selectedTeamID == nil ? "먼저 응원 팀을 선택해 주세요" : "선택한 팀으로 시작합니다")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 20)

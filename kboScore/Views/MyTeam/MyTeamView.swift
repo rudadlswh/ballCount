@@ -118,10 +118,10 @@ struct MyTeamView: View {
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
-                    .ignoresSafeArea(edges: .bottom)
+                    .ignoresSafeArea()
                 } else {
                     KBOLivePalette.background
-                        .ignoresSafeArea(edges: .bottom)
+                        .ignoresSafeArea()
                 }
             }
             .navigationTitle("마이팀")
@@ -176,7 +176,7 @@ struct MyTeamAttendanceSummaryView: View {
                 .monospacedDigit()
                 .foregroundStyle(
                     title == "승률"
-                        ? (appModel.favoriteStadiumPalette?.secondary ?? appModel.currentTheme.accent)
+                        ? (appModel.favoriteStadiumPalette?.secondaryTint ?? appModel.currentTheme.accent)
                         : (appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
                 )
                 .lineLimit(1)
@@ -198,7 +198,7 @@ private struct MyTeamHeaderView: View {
     }
 
     private var headerTitleColor: Color {
-        appModel.favoriteStadiumPalette?.textPrimary ?? .white
+        appModel.favoriteStadiumPalette?.tint ?? .white
     }
 
     private var headerBodyColor: Color {
@@ -214,7 +214,7 @@ private struct MyTeamHeaderView: View {
 
     private var headerControlBackground: Color {
         if let palette = appModel.favoriteStadiumPalette {
-            return palette.elevatedCard.opacity(palette.usesLightForegroundStyle ? 0.9 : 0.16)
+            return palette.elevatedCard
         }
         return Color.white.opacity(0.14)
     }
@@ -257,14 +257,21 @@ private struct MyTeamHeaderView: View {
         .background(
             LinearGradient(
                 colors: [
-                    appModel.favoriteStadiumPalette?.background.opacity(0.96) ?? appModel.currentTheme.heroStart.opacity(0.96),
-                    appModel.favoriteStadiumPalette?.primary.opacity(0.80) ?? appModel.currentTheme.heroEnd.opacity(0.84)
+                    appModel.favoriteStadiumPalette?.uniformSurface ?? appModel.currentTheme.heroStart.opacity(0.96),
+                    appModel.favoriteStadiumPalette?.uniformSurface ?? appModel.currentTheme.heroEnd.opacity(0.84)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
             in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
+        .overlay {
+            if let palette = appModel.favoriteStadiumPalette {
+                HomeUniformTexture(palette: palette)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(

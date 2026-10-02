@@ -14,48 +14,42 @@ import Foundation
 
 // StandingsTableMetrics 구조체는 StandingsTableMetrics 타입의 역할과 값을 정의합니다.
 struct StandingsTableMetrics {
-    let width: CGFloat
-    let isCompact: Bool
-    let isNarrow: Bool
+    let textScale: CGFloat
+    let availableWidth: CGFloat
 
-    // 이 초기화 메서드는 인스턴스 생성에 필요한 값을 설정합니다.
-    init(width: CGFloat) {
-        self.width = width
-        isCompact = width < 370
-        isNarrow = width < 350
+    init(textScale: CGFloat, availableWidth: CGFloat = 0) {
+        self.textScale = textScale
+        self.availableWidth = availableWidth
     }
 
-    var rowHeight: CGFloat { isCompact ? 48 : 52 }
-    var horizontalPadding: CGFloat { isNarrow ? 4 : (isCompact ? 5 : 6) }
-    var spacing: CGFloat { isNarrow ? 2 : (isCompact ? 3 : 4) }
-    var rankMovementWidth: CGFloat { isNarrow ? 46 : 48 }
-    var rankWidth: CGFloat { isNarrow ? 22 : 24 }
-    var movementWidth: CGFloat { 22 }
-    var logoSize: CGFloat { isNarrow ? 18 : (isCompact ? 20 : 22) }
-    var gamesWidth: CGFloat { isNarrow ? 21 : (isCompact ? 22 : 24) }
-    var countWidth: CGFloat { isNarrow ? 17 : (isCompact ? 18 : 19) }
-    var percentageWidth: CGFloat { isNarrow ? 35 : (isCompact ? 37 : 39) }
-    var gamesBehindWidth: CGFloat { isNarrow ? 29 : (isCompact ? 31 : 33) }
-    var streakWidth: CGFloat { isNarrow ? 56 : 58 }
-    var accentWidth: CGFloat { isCompact ? 78 : 120 }
+    var rowHeight: CGFloat { 34.5 * textScale }
+    var horizontalPadding: CGFloat { 12 * textScale }
+    var spacing: CGFloat { 8 * textScale }
+    var rankWidth: CGFloat { 20 * textScale }
+    var movementWidth: CGFloat { 14 * textScale }
+    var rankMovementWidth: CGFloat { 40 * textScale }
+    var teamColumnWidth: CGFloat { 56 * textScale }
+    var gamesWidth: CGFloat { 30 * textScale * statsScale }
+    var countWidth: CGFloat { 26 * textScale * statsScale }
+    var percentageWidth: CGFloat { 43 * textScale * statsScale }
+    var gamesBehindWidth: CGFloat { 43 * textScale * statsScale }
+    var streakWidth: CGFloat { 64 * textScale * statsScale }
+    var accentWidth: CGFloat { (availableWidth > 0 ? availableWidth : width) / 2 }
 
-    var teamColumnWidth: CGFloat {
-        let maximumTeamWidth: CGFloat = isNarrow ? 64 : (isCompact ? 72 : 82)
-        let minimumTeamWidth: CGFloat = isNarrow ? 50 : (isCompact ? 58 : 64)
-        let remainingWidth = width - nonTeamColumnsWidth
-        return min(max(remainingWidth, minimumTeamWidth), maximumTeamWidth)
+    var pinnedWidth: CGFloat {
+        horizontalPadding + rankMovementWidth + teamColumnWidth + spacing * 2
     }
 
-    private var nonTeamColumnsWidth: CGFloat {
-        rankMovementWidth +
-            gamesWidth +
-            countWidth * 3 +
-            percentageWidth +
-            gamesBehindWidth +
-            streakWidth +
-            spacing * 8 +
-            horizontalPadding * 2
+    private var statsScale: CGFloat {
+        max(1, (availableWidth - pinnedWidth - spacing * 6 - horizontalPadding) / (254 * textScale))
     }
+
+    var statsContentWidth: CGFloat {
+        gamesWidth + countWidth * 3 + percentageWidth + gamesBehindWidth +
+            streakWidth + spacing * 6 + horizontalPadding
+    }
+
+    var width: CGFloat { pinnedWidth + statsContentWidth }
 }
 
 extension TeamIdentity {

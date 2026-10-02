@@ -26,7 +26,7 @@ struct NotificationsToolbarButton: View {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "bell")
                     .font(.headline.weight(.semibold))
-                    .foregroundStyle(appModel.currentTheme.accent)
+                    .foregroundStyle(StadiumPalette.app.textPrimary)
 
                 notificationBadge(
                     count: appModel.unreadNotificationsCount,
@@ -35,62 +35,9 @@ struct NotificationsToolbarButton: View {
                     yOffset: -8
                 )
             }
-            .frame(width: 28, height: 28)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(StadiumPalette.app.bellControlSurface, in: Circle())
         }
-        .accessibilityLabel("알림")
-        .accessibilityValue(notificationAccessibilityValue(unreadCount: appModel.unreadNotificationsCount))
-    }
-}
-
-// StadiumNotificationChromeButton 구조체는 StadiumNotificationChromeButton 타입의 역할과 값을 정의합니다.
-struct StadiumNotificationChromeButton: View {
-    @Environment(AppModel.self) private var appModel
-    let palette: StadiumPalette
-
-    var body: some View {
-        Button {
-            appModel.presentNotifications()
-        } label: {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                palette.tabBarSurface,
-                                palette.recessedSurface,
-                                palette.elevatedCard.opacity(0.82)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(palette.primary)
-                            .frame(width: 3)
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(palette.textPrimary.opacity(0.14), lineWidth: 0.75)
-                    }
-                    .shadow(color: palette.ambientShadow.opacity(0.62), radius: 12, y: 6)
-
-                Image(systemName: "bell.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(palette.textPrimary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                notificationBadge(
-                    count: appModel.unreadNotificationsCount,
-                    background: palette.primary,
-                    xOffset: 7,
-                    yOffset: -6
-                )
-            }
-            .frame(width: 44, height: 44)
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
         .accessibilityLabel("알림")
         .accessibilityValue(notificationAccessibilityValue(unreadCount: appModel.unreadNotificationsCount))
     }
@@ -126,19 +73,12 @@ extension View {
 
 // NotificationsToolbarButtonModifier 구조체는 SwiftUI 뷰 스타일과 동작을 재사용 가능한 형태로 적용합니다.
 private struct NotificationsToolbarButtonModifier: ViewModifier {
-    @Environment(AppModel.self) private var appModel
-
-    // body 메서드는 SwiftUI 화면의 본문 구성을 반환합니다.
     func body(content: Content) -> some View {
-        if appModel.isStadiumFavoriteSelected {
-            content
-        } else {
-            content
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NotificationsToolbarButton()
-                    }
+        content
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NotificationsToolbarButton()
                 }
-        }
+            }
     }
 }

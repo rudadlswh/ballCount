@@ -14,29 +14,15 @@ import SwiftUI
 // StandingsView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 struct StandingsView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var tableTextScale = 1.0
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 standingsContent
             }
-            .background {
-                if let palette = appModel.favoriteStadiumPalette {
-                    LinearGradient(
-                        colors: [palette.background, palette.sectionBackground],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                } else {
-                    KBOLivePalette.background
-                        .ignoresSafeArea(edges: .bottom)
-                }
-            }
-            .navigationTitle("순위")
-            .navigationBarTitleDisplayMode(.inline)
-            .stadiumNavigationChrome(appModel.favoriteStadiumPalette)
-            .notificationsToolbarButton()
+            .dashboardScreen()
             .task(id: appModel.selectedTab) {
                 guard appModel.selectedTab == .standings else { return }
                 await appModel.loadStandingsIfNeeded()
@@ -48,12 +34,19 @@ struct StandingsView: View {
     }
 
     private var standingsContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-#if DEBUG
-            if let debugMessage = appModel.debugStandingsDiagnosticMessage {
-                DataStatusBannerView(message: debugMessage)
+        VStack(alignment: .leading, spacing: 18) {
+            AppScreenHeader(title: "순위", subtitle: "우리 팀의 오늘을 한눈에")
+            HStack {
+                Text("팀 순위").font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .background(StadiumPalette.app.elevatedCard, in: Capsule())
+                Text("정규시즌").font(.subheadline).foregroundStyle(StadiumPalette.app.textSecondary)
+                    .frame(maxWidth: .infinity)
+            }.padding(4).background(StadiumPalette.app.recessedSurface, in: Capsule())
+            if let favorite = appModel.standingsSnapshots.first(where: { $0.team.id == appModel.settings.favoriteTeamID }) {
+                favoriteSummary(favorite)
             }
-#endif
+            AppSectionTitle(title: "\(Calendar.current.component(.year, from: Date())) 정규시즌")
             switch standingsContentState {
             case .loading:
                 ProgressView("순위 데이터를 불러오는 중")
@@ -65,15 +58,31 @@ struct StandingsView: View {
                     message: "현재 데이터에서 시범경기를 제외한 정규시즌 종료 경기를 찾지 못했습니다."
                 )
             case let .table(rows, revision, favoriteTeamID):
-                standingsTable(
-                    rows: rows,
-                    revision: revision,
-                    favoriteTeamID: favoriteTeamID
-                )
+                standingsTable(rows: rows, revision: revision, favoriteTeamID: favoriteTeamID)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 22)
+        .padding(.bottom, 18)
+    }
+
+    private func favoriteSummary(_ snapshot: TeamStandingsSnapshot) -> some View {
+        HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Text("MY TEAM").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(StadiumPalette.app.tint)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(StadiumPalette.app.tabBarSelectionSurface, in: Capsule())
+                    Text(snapshot.team.identity.displayName).font(.subheadline.weight(.semibold))
+                }
+                HStack(spacing: 12) {
+                    Text(snapshot.recordText).font(.headline)
+                    Text(snapshot.currentStreakText).font(.caption.weight(.semibold)).foregroundStyle(StadiumPalette.app.tint)
+                }
+            }
+            Spacer(minLength: 0)
+            Text("\(snapshot.rank)위").font(.system(size: 36, weight: .bold)).foregroundStyle(StadiumPalette.app.tint)
+        }.cardSurface(padding: 16)
     }
 
     private var standingsContentState: StandingsContentState {
@@ -95,28 +104,77 @@ struct StandingsView: View {
         let _ = Self.logVisibleRows(rows, revision: revision)
 #endif
 
-        return GeometryReader { proxy in
-            let metrics = StandingsTableMetrics(width: proxy.size.width)
-            let leaderSnapshot = rows.first
+        let metrics = StandingsTableMetrics(textScale: tableTextScale)
+        let leaderSnapshot = rows.first
 
-            VStack(spacing: 5) {
-                StandingsTableHeader(metrics: metrics)
+        return Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                ScrollView(.horizontal) {
+                    tableRows(rows, leader: leaderSnapshot, favoriteTeamID: favoriteTeamID, metrics: metrics)
+                        .frame(width: metrics.width)
+                        .padding(.bottom, 8)
+                }
+                .accessibilityIdentifier("standingsTable")
+                .accessibilityLabel("팀 순위표")
+                .accessibilityHint("좌우로 스크롤해 모든 기록을 확인할 수 있습니다")
+            } else {
+                GeometryReader { proxy in
+                    let metrics = StandingsTableMetrics(textScale: tableTextScale, availableWidth: proxy.size.width)
+                    ZStack(alignment: .topLeading) {
+                        tableRows(rows, leader: leaderSnapshot, favoriteTeamID: favoriteTeamID, metrics: metrics, showsStats: false)
 
-                LazyVStack(spacing: 5) {
-                    ForEach(rows) { snapshot in
-                        StandingsRowView(
-                            snapshot: snapshot,
-                            leaderSnapshot: leaderSnapshot,
-                            favoriteTeamID: favoriteTeamID,
-                            metrics: metrics
-                        )
-                        .id(StandingsRowRenderIdentity(snapshot: snapshot))
+                        HStack(spacing: 0) {
+                            Color.clear
+                                .frame(width: metrics.pinnedWidth)
+                                .allowsHitTesting(false)
+
+                            ScrollView(.horizontal) {
+                                VStack(spacing: 0) {
+                                    StandingsStatsHeader(metrics: metrics)
+                                    ForEach(rows) { snapshot in
+                                        StandingsStatsCells(snapshot: snapshot, leader: leaderSnapshot, metrics: metrics)
+                                            .frame(height: metrics.rowHeight)
+                                            .accessibilityHidden(true)
+                                    }
+                                }
+                                .padding(.trailing, metrics.horizontalPadding)
+                                .frame(width: metrics.statsContentWidth)
+                                .padding(.bottom, 8)
+                            }
+                            .frame(width: max(0, proxy.size.width - metrics.pinnedWidth))
+                            .accessibilityIdentifier("standingsStatsScroll")
+                            .accessibilityLabel("팀별 기록")
+                            .accessibilityHint("좌우로 스크롤해 모든 기록을 확인할 수 있습니다")
+                        }
                     }
                 }
+                .frame(height: CGFloat(rows.count + 1) * metrics.rowHeight + 8)
             }
-            .id(revision)
         }
-        .frame(height: CGFloat(rows.count) * 57 + 18)
+        .font(.system(size: 13 * tableTextScale, weight: .medium))
+        .cardSurface(padding: 4, cornerRadius: 18)
+        .overlay(alignment: .bottomTrailing) {
+            Text("← 기록을 옆으로 넘겨보세요 →")
+                .font(.system(size: 10)).foregroundStyle(StadiumPalette.app.textSecondary)
+                .offset(y: 18)
+        }
+        .padding(.bottom, 18)
+    }
+
+    private func tableRows(
+        _ rows: [TeamStandingsSnapshot],
+        leader: TeamStandingsSnapshot?,
+        favoriteTeamID: String?,
+        metrics: StandingsTableMetrics,
+        showsStats: Bool = true
+    ) -> some View {
+        VStack(spacing: 0) {
+            StandingsTableHeader(metrics: metrics, showsStats: showsStats)
+            ForEach(rows) { snapshot in
+                StandingsRowView(snapshot: snapshot, leaderSnapshot: leader, favoriteTeamID: favoriteTeamID,
+                                 metrics: metrics, showsStats: showsStats)
+            }
+        }
     }
 
 #if DEBUG
@@ -133,13 +191,30 @@ private struct StandingsTableHeader: View {
     @Environment(AppModel.self) private var appModel
 
     let metrics: StandingsTableMetrics
+    var showsStats = true
 
     var body: some View {
         HStack(spacing: metrics.spacing) {
-            Color.clear
-                .frame(width: metrics.rankMovementWidth)
+            Text("순위")
+                .frame(width: metrics.rankMovementWidth, alignment: .trailing)
             Text("팀")
                 .frame(width: metrics.teamColumnWidth, alignment: .leading)
+            if showsStats {
+                StandingsStatsHeader(metrics: metrics)
+            }
+        }
+        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+        .padding(.horizontal, metrics.horizontalPadding)
+        .frame(height: metrics.rowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StandingsStatsHeader: View {
+    let metrics: StandingsTableMetrics
+
+    var body: some View {
+        HStack(spacing: metrics.spacing) {
             headerLabel("경기", width: metrics.gamesWidth)
             headerLabel("승", width: metrics.countWidth)
             headerLabel("패", width: metrics.countWidth)
@@ -148,17 +223,14 @@ private struct StandingsTableHeader: View {
             headerLabel("게임차", width: metrics.gamesBehindWidth)
             headerLabel("연속", width: metrics.streakWidth)
         }
-        .font(.caption2.weight(.bold))
-        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-        .padding(.horizontal, metrics.horizontalPadding)
-        .frame(height: 18)
+        .foregroundStyle(StadiumPalette.app.textSecondary)
+        .frame(height: metrics.rowHeight)
     }
 
     // headerLabel 메서드는 이 타입의 주요 동작을 수행합니다.
     private func headerLabel(_ title: String, width: CGFloat) -> some View {
         Text(title)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
             .frame(width: width, alignment: .trailing)
     }
 }
@@ -169,6 +241,7 @@ private struct StandingsRowView: View {
     let leaderSnapshot: TeamStandingsSnapshot?
     let favoriteTeamID: String?
     let metrics: StandingsTableMetrics
+    var showsStats = true
 
     var body: some View {
 #if DEBUG
@@ -177,31 +250,18 @@ private struct StandingsRowView: View {
         ZStack(alignment: .leading) {
             rowBackground
 
-            TeamAccentView(
-                identity: identity,
-                isFavorite: isFavorite,
-                width: metrics.accentWidth
-            )
-
             HStack(spacing: metrics.spacing) {
                 rankCell
                 teamCell
-                StandingsColumnValue(value: "\(snapshot.gamesPlayed)", width: metrics.gamesWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: "\(snapshot.wins)", width: metrics.countWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: "\(snapshot.losses)", width: metrics.countWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: "\(snapshot.ties)", width: metrics.countWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: snapshot.broadcastWinPercentageText, width: metrics.percentageWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: snapshot.gamesBehindText(leader: leaderSnapshot), width: metrics.gamesBehindWidth, isFavorite: isFavorite)
-                StandingsColumnValue(value: snapshot.currentStreakText, width: metrics.streakWidth, isFavorite: isFavorite)
+                if showsStats {
+                    StandingsStatsCells(snapshot: snapshot, leader: leaderSnapshot, metrics: metrics)
+                }
             }
             .padding(.horizontal, metrics.horizontalPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(height: metrics.rowHeight)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(borderColor, lineWidth: isFavorite ? 1 : 0.7)
-        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
     }
@@ -209,61 +269,38 @@ private struct StandingsRowView: View {
     private var rankCell: some View {
         HStack(spacing: 2) {
             Text("\(snapshot.rank)")
-                .font(isFavorite ? Font.subheadline.weight(.black) : Font.subheadline.weight(.heavy))
                 .monospacedDigit()
-                .foregroundStyle(Color.white.opacity(isFavorite ? 1 : 0.94))
+                .foregroundStyle(isFavorite ? StadiumPalette.app.tint : StadiumPalette.app.textPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .allowsTightening(true)
                 .frame(width: metrics.rankWidth, alignment: .trailing)
 
             Text(rankMovement.displayText)
-                .font(.caption2.weight(.black))
                 .monospacedDigit()
                 .foregroundStyle(rankMovementColor)
                 .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .allowsTightening(true)
                 .frame(width: metrics.movementWidth, alignment: .trailing)
         }
         .frame(width: metrics.rankMovementWidth, alignment: .trailing)
     }
 
     private var teamCell: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 5) {
             Text(teamName)
-                .font(.system(size: 15, weight: isFavorite ? .black : .bold, design: .default))
-                .foregroundStyle(Color.white.opacity(isFavorite ? 1 : 0.96))
+                .foregroundStyle(isFavorite ? StadiumPalette.app.tint : StadiumPalette.app.textPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if isFavorite {
+                Circle().fill(StadiumPalette.app.tint).frame(width: 4, height: 4)
+            }
         }
         .frame(width: metrics.teamColumnWidth, alignment: .leading)
     }
 
     private var rowBackground: some View {
-        Group {
-            if isFavorite {
-                LinearGradient(
-                    colors: [
-                        identity.theme.heroEnd,
-                        identity.theme.accent,
-                        identity.theme.accentSecondary.opacity(0.82)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            } else {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.34, green: 0.34, blue: 0.34),
-                        Color(red: 0.25, green: 0.25, blue: 0.25)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            }
-        }
+        LinearGradient(stops: [
+            .init(color: isFavorite ? StadiumPalette.app.tabBarSelectionSurface : .clear, location: 0),
+            .init(color: .clear, location: 0.5),
+            .init(color: .clear, location: 1)
+        ], startPoint: .leading, endPoint: .trailing)
     }
 
     private var identity: TeamIdentity {
@@ -278,10 +315,6 @@ private struct StandingsRowView: View {
         snapshot.team.id == favoriteTeamID
     }
 
-    private var borderColor: Color {
-        isFavorite ? Color.white.opacity(0.28) : Color.white.opacity(0.08)
-    }
-
     private var rankMovement: RankingMovement {
         snapshot.rankMovement
     }
@@ -289,11 +322,11 @@ private struct StandingsRowView: View {
     private var rankMovementColor: Color {
         switch rankMovement {
         case .up:
-            Color(red: 0.42, green: 1.0, blue: 0.62)
+            Color.green
         case .down:
-            Color(red: 1.0, green: 0.58, blue: 0.58)
+            Color.red
         case .unchanged:
-            Color.white.opacity(0.48)
+            Color.secondary
         }
     }
 
@@ -311,42 +344,36 @@ private struct StandingsRowView: View {
 #endif
 }
 
+private struct StandingsStatsCells: View {
+    @Environment(AppModel.self) private var appModel
+    let snapshot: TeamStandingsSnapshot
+    let leader: TeamStandingsSnapshot?
+    let metrics: StandingsTableMetrics
+
+    var body: some View {
+        HStack(spacing: metrics.spacing) {
+            StandingsColumnValue(value: "\(snapshot.gamesPlayed)", width: metrics.gamesWidth)
+            StandingsColumnValue(value: "\(snapshot.wins)", width: metrics.countWidth)
+            StandingsColumnValue(value: "\(snapshot.losses)", width: metrics.countWidth)
+            StandingsColumnValue(value: "\(snapshot.ties)", width: metrics.countWidth)
+            StandingsColumnValue(value: snapshot.broadcastWinPercentageText, width: metrics.percentageWidth)
+            StandingsColumnValue(value: snapshot.gamesBehindText(leader: leader), width: metrics.gamesBehindWidth)
+            StandingsColumnValue(value: snapshot.currentStreakText, width: metrics.streakWidth)
+        }
+        .foregroundStyle(snapshot.team.id == appModel.settings.favoriteTeamID ? StadiumPalette.app.tint : StadiumPalette.app.textPrimary)
+    }
+}
+
 // StandingsColumnValue 구조체는 StandingsColumnValue 타입의 역할과 값을 정의합니다.
 private struct StandingsColumnValue: View {
     let value: String
     let width: CGFloat
-    let isFavorite: Bool
 
     var body: some View {
         Text(value)
-            .font(.callout.weight(isFavorite ? .bold : .semibold))
             .monospacedDigit()
-            .foregroundStyle(Color.white.opacity(isFavorite ? 1 : 0.92))
             .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .allowsTightening(true)
             .frame(width: width, alignment: .trailing)
-    }
-}
-
-// TeamAccentView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
-private struct TeamAccentView: View {
-    let identity: TeamIdentity
-    let isFavorite: Bool
-    let width: CGFloat
-
-    var body: some View {
-        LinearGradient(
-            colors: [
-                identity.theme.accent.opacity(isFavorite ? 0.12 : 0.86),
-                identity.theme.accent.opacity(isFavorite ? 0.08 : 0.36),
-                Color.clear
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-        .frame(width: width)
-        .clipped()
     }
 }
 

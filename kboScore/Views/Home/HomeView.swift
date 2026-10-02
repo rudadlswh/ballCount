@@ -1,428 +1,218 @@
-//
-//  HomeView.swift
-//  kboScore
-//  기능 설명: 홈 화면에서 오늘 경기와 경기 없는 날의 대체 요약을 표시합니다.
-//  사용자가 경기 상태와 설정을 빠르게 이해하도록 도메인 상태를 화면 구조에 직접 매핑합니다.
-//  SwiftUI 상태 갱신, 접근성, 작은 화면 레이아웃에서 정보가 겹치지 않도록 표시 조건을 제한합니다.
-//  TODO : 반복되는 화면 조각은 재사용 가능한 컴포넌트로 분리하고 미리보기 케이스를 보강합니다.
-//
-//  Created by Codex on 3/25/26.
-//
-
 import SwiftUI
 
-// HomeView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 struct HomeView: View {
     @Environment(AppModel.self) private var appModel
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                if let palette = appModel.favoriteStadiumPalette {
-                    stadiumContent(palette)
-                } else {
-                    defaultContent
-                }
-            }
-            .background {
-                if let palette = appModel.favoriteStadiumPalette {
-                    LinearGradient(
-                        colors: [palette.background, palette.sectionBackground],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                } else {
-                    KBOLivePalette.background
-                        .ignoresSafeArea(edges: .bottom)
-                }
-            }
-//            .navigationTitle("KBO LIVE")
-            .navigationBarTitleDisplayMode(.inline)
-            .stadiumNavigationChrome(appModel.favoriteStadiumPalette)
-            .notificationsToolbarButton()
-            .refreshable {
-                await appModel.refreshHome()
-            }
-            .navigationDestination(for: String.self) { gameIdentity in
-                GameDetailView(gameIdentity: gameIdentity)
-            }
-            .navigationDestination(for: GameDetail.self) { game in
-                GameDetailView(game: game)
-            }
-        }
-    }
-
-    private var defaultContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let statusMessage = appModel.statusMessage(for: .home) {
-                DataStatusBannerView(message: statusMessage)
-            }
-#if DEBUG
-            if let debugMessage = appModel.debugHomeFallbackDiagnosticMessage {
-                DataStatusBannerView(message: debugMessage)
-            }
-#endif
-
-            SectionTitleView(title: "직관 기록")
-            MyTeamAttendanceSummaryView(summary: appModel.myTeamAttendanceSummary)
-
-            switch homeContentState {
-            case .noGames:
-                EmptyStateView(
-                    systemImage: "sportscourt",
-                    title: "표시할 경기가 없습니다",
-                    message: "오늘 경기가 없고 최근 완료 경기 데이터도 없습니다."
-                )
-            case let .fallbackStandings(title, subtitle, snapshots):
-                HomeFallbackStandingsSection(
-                    title: title,
-                    subtitle: subtitle,
-                    snapshots: snapshots
-                )
-            case .noFilteredGames:
-                EmptyStateView(
-                    systemImage: "sportscourt",
-                    title: "표시할 경기가 없습니다",
-                    message: "선택한 필터에 맞는 오늘 경기가 없습니다."
-                )
-            case let .games(games):
-                LazyVStack(spacing: 8) {
-                    ForEach(games) { game in
-                        NavigationLink(value: game) {
-                            GameCardView(
-                                summary: game.summary(isMyTeamGame: game.involves(teamID: appModel.settings.favoriteTeamID)),
-                                showsHomeTeamBadge: true,
-                                liveColorStyle: .white
-                            )
+                VStack(alignment: .leading, spacing: 18) {
+                    AppScreenHeader(title: "볼카운트", subtitle: "오늘도, \(appModel.favoriteTeam?.identity.displayName ?? "야구")와 함께")
+                    favoriteTeamMenu
+                    if let message = appModel.statusMessage(for: .home) {
+                        DataStatusBannerView(message: message)
+                    }
+                    if appModel.isLoading && appModel.games.isEmpty {
+                        ProgressView("경기를 불러오는 중")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else if let message = appModel.loadErrorMessage, appModel.games.isEmpty {
+                        ContentUnavailableView {
+                            Label("경기를 불러오지 못했습니다", systemImage: "wifi.exclamationmark")
+                        } description: { Text(message) } actions: {
+                            Button("다시 시도") { Task { await appModel.refreshHome() } }
                         }
-                        .buttonStyle(.plain)
+                    } else {
+                        gameSection
+                    }
+                    if let snapshot = appModel.standingsSnapshots.first(where: { $0.team.id == appModel.settings.favoriteTeamID }) {
+                        seasonSummary(snapshot)
+                    }
+                    if let nextGame {
+                        NavigationLink(value: nextGame) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "calendar").foregroundStyle(StadiumPalette.app.textSecondary)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("다음 경기 · \(nextGame.awayTeam.identity.shortLabel) vs \(nextGame.homeTeam.identity.shortLabel)")
+                                        .font(.subheadline.weight(.semibold))
+                                    Text("\(nextGame.scheduledStart.formatted(.dateTime.month().day().hour().minute())) · \(nextGame.venue)")
+                                        .font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                            }
+                            .cardSurface(padding: 16, cornerRadius: 16)
+                        }.buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 22)
+                .padding(.bottom, 18)
             }
+            .dashboardScreen()
+            .refreshable { await appModel.refreshHome() }
+            .task { await appModel.loadStandingsIfNeeded() }
+            .navigationDestination(for: String.self) { GameDetailView(gameIdentity: $0) }
+            .navigationDestination(for: GameDetail.self) { GameDetailView(game: $0) }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
-    // stadiumContent 메서드는 이 타입의 주요 동작을 수행합니다.
-    private func stadiumContent(_ palette: StadiumPalette) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let statusMessage = appModel.statusMessage(for: .home) {
-                DataStatusBannerView(message: statusMessage)
+    private var favoriteTeamMenu: some View {
+        Menu {
+            ForEach(appModel.teams) { team in
+                Button(team.identity.displayName) { appModel.settings.favoriteTeamID = team.id }
             }
-#if DEBUG
-            if let debugMessage = appModel.debugHomeFallbackDiagnosticMessage {
-                DataStatusBannerView(message: debugMessage)
+        } label: {
+            HStack(spacing: 10) {
+                FavoriteTeamBadge(teamID: appModel.settings.favoriteTeamID)
+                Text(appModel.favoriteTeam?.identity.displayName ?? "응원 팀 선택").font(.subheadline.weight(.semibold))
+                Spacer(minLength: 0)
+                Text("응원팀").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                Image(systemName: "chevron.down").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
             }
-#endif
-
-            switch homeContentState {
-            case .noGames:
-                EmptyStateView(
-                    systemImage: "sportscourt",
-                    title: "표시할 경기가 없습니다",
-                    message: "오늘 경기가 없고 최근 완료 경기 데이터도 없습니다."
-                )
-            case let .fallbackStandings(title, subtitle, snapshots):
-                HomeFallbackStandingsSection(
-                    title: title,
-                    subtitle: subtitle,
-                    snapshots: snapshots
-                )
-            case .noFilteredGames:
-                EmptyStateView(
-                    systemImage: "sportscourt",
-                    title: "표시할 경기가 없습니다",
-                    message: "선택한 필터에 맞는 오늘 경기가 없습니다."
-                )
-            case let .games(games):
-                if let featuredHomeGame = games.first {
-                    Text("오늘의 메인 보드")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(palette.secondary)
-                        .padding(.leading, 2)
-
-                    NavigationLink(value: featuredHomeGame) {
-                        HomeHeroGameCard(
-                            summary: featuredHomeGame.summary(isMyTeamGame: featuredHomeGame.involves(teamID: appModel.settings.favoriteTeamID)),
-                            palette: palette
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            
-            if appModel.attendedGameKeys.isEmpty == false || appModel.myTeamAttendanceSummary.hasCompletedGames {
-                SectionTitleView(title: "직관 기록")
-                MyTeamAttendanceSummaryView(summary: appModel.myTeamAttendanceSummary)
-            }
-            
+            .cardSurface(padding: 8, cornerRadius: 14)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("favoriteTeamMenu")
+    }
+
+    @ViewBuilder private var gameSection: some View {
+        switch homeContentState {
+        case .noGames, .noFilteredGames:
+            EmptyStateView(systemImage: "sportscourt", title: "표시할 경기가 없습니다", message: "오늘 등록된 경기가 없습니다.")
+        case let .fallbackStandings(title, subtitle, snapshots):
+            HomeFallbackStandingsSection(title: title, subtitle: subtitle, snapshots: snapshots)
+        case let .games(games):
+            AppSectionTitle(title: "오늘의 경기", detail: games.first?.scheduledStart.formatted(.dateTime.month().day().weekday()) ?? "")
+            if let featured = games.first {
+                NavigationLink(value: featured) {
+                    HomeHeroGameCard(summary: featured.summary(isMyTeamGame: featured.involves(teamID: appModel.settings.favoriteTeamID)), palette: .app)
+                }.buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func seasonSummary(_ snapshot: TeamStandingsSnapshot) -> some View {
+        VStack(spacing: 12) {
+            Button { appModel.selectedTab = .standings } label: {
+                HStack {
+                    Text("\(snapshot.team.identity.shortLabel)의 시즌").font(.headline).foregroundStyle(StadiumPalette.app.textPrimary)
+                    Spacer()
+                    Text("전체 순위  ›").font(.caption.weight(.semibold)).foregroundStyle(StadiumPalette.app.tint)
+                }
+            }.buttonStyle(.plain)
+            HStack {
+                AppMetric(value: "\(snapshot.rank)위", label: "리그 순위", highlighted: true)
+                Divider().frame(height: 44)
+                AppMetric(value: snapshot.winPercentageText, label: "승률")
+                Divider().frame(height: 44)
+                AppMetric(value: snapshot.currentStreakText, label: "최근 흐름")
+            }.cardSurface(padding: 16)
+        }
+    }
+
+    private var nextGame: GameDetail? {
+        appModel.games.filter { $0.status == .upcoming && $0.involves(teamID: appModel.settings.favoriteTeamID) }
+            .sorted { $0.scheduledStart < $1.scheduledStart }.first
     }
 
     private var homeContentState: HomeContentState {
-        HomeContentState.make(
-            todayGames: appModel.todayGames,
-            filteredGames: appModel.filteredHomeGames,
-            filteredGameDetails: appModel.filteredHomeGameDetails,
-            fallbackTitle: appModel.homeFallbackTitleText,
-            fallbackSubtitle: appModel.homeFallbackSubtitleText,
-            fallbackSnapshots: appModel.homeFallbackStandingsSnapshots
-        )
+        HomeContentState.make(todayGames: appModel.todayGames, filteredGames: appModel.filteredHomeGames,
+                              filteredGameDetails: appModel.filteredHomeGameDetails,
+                              fallbackTitle: appModel.homeFallbackTitleText, fallbackSubtitle: appModel.homeFallbackSubtitleText,
+                              fallbackSnapshots: appModel.homeFallbackStandingsSnapshots)
     }
-
 }
 
-// HomeHeroGameCard 구조체는 HomeHeroGameCard 타입의 역할과 값을 정의합니다.
 private struct HomeHeroGameCard: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let summary: GameSummary
     let palette: StadiumPalette
 
     var body: some View {
-        ZStack {
-            heroBackground
-
-            VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 18) {
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
-                    StatusBadge(
-                        status: summary.status,
-                        tintColor: summary.status.stadiumTintColor(palette),
-                        backgroundColor: Color.black.opacity(0.30)
-                    )
-
-                    Spacer(minLength: 8)
-
-                    Text(timeText)
-                        .font(.caption.weight(.heavy))
-                        .monospacedDigit()
-                        .foregroundStyle(Color.white.opacity(0.94))
-                        .lineLimit(1)
+                    StatusBadge(status: summary.status)
+                    Text(HomeHeroGamePresentation.timeText(for: summary)).font(.caption.weight(.semibold))
+                    Spacer(minLength: 0)
+                    Text(summary.venue).font(.caption).foregroundStyle(palette.textSecondary)
                 }
-
-                HStack(alignment: .center, spacing: 0) {
-                    HeroTeamMatchupSide(
-                        team: summary.awayTeam,
-                        role: "원정",
-                        pitcherName: summary.awayStartingPitcherName,
-                        alignment: .leading
-                    )
-
-                    vsBadge
-
-                    HeroTeamMatchupSide(
-                        team: summary.homeTeam,
-                        role: "홈",
-                        pitcherName: summary.homeStartingPitcherName,
-                        alignment: .trailing
-                    )
+                VStack(alignment: .leading, spacing: 6) {
+                    StatusBadge(status: summary.status)
+                    Text("\(HomeHeroGamePresentation.timeText(for: summary)) · \(summary.venue)").font(.caption)
                 }
-
-                if summary.status.isLiveLike {
-                    liveScorePanel
-                }
-
-                HStack(spacing: 6) {
-                    Image(systemName: "mappin.and.ellipse")
-                        .font(.caption.weight(.bold))
-                    Text(venueText)
-                        .font(.caption.weight(.bold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .foregroundStyle(Color.white.opacity(0.90))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity)
-                .background(
-                    Capsule()
-                        .fill(Color.black.opacity(0.26))
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.75)
-                )
             }
-            .padding(14)
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 16) {
+                    teamSide(summary.awayTeam, score: summary.awayScore, role: "원정", pitcher: summary.awayStartingPitcherName)
+                    teamSide(summary.homeTeam, score: summary.homeScore, role: "홈", pitcher: summary.homeStartingPitcherName)
+                }
+            } else {
+                HStack(spacing: 12) {
+                    teamSide(summary.awayTeam, score: summary.awayScore, role: "원정", pitcher: summary.awayStartingPitcherName)
+                    Text(":").font(.title).foregroundStyle(palette.textSecondary)
+                    teamSide(summary.homeTeam, score: summary.homeScore, role: "홈", pitcher: summary.homeStartingPitcherName)
+                }
+            }
+            if summary.status.isLiveLike {
+                Rectangle().fill(palette.ghostBorder).frame(height: 1)
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        Text(liveSituation).font(.caption)
+                        Spacer(minLength: 8)
+                        countIndicators
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(liveSituation).font(.caption)
+                        countIndicators
+                    }
+                }
+            }
+            Text("경기 자세히 보기")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .background(palette.primary, in: RoundedRectangle(cornerRadius: 15))
         }
-        .frame(minHeight: 172)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-        )
-        .shadow(color: palette.ambientShadow.opacity(0.46), radius: 18, y: 10)
+        .foregroundStyle(palette.textPrimary)
+        .cardSurface(padding: 16, cornerRadius: 22)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel("\(HomeHeroGamePresentation.accessibilityLabel(for: summary)), 점수 \(summary.awayScore.map(String.init) ?? "미정") 대 \(summary.homeScore.map(String.init) ?? "미정")")
+        .accessibilityHint("경기 상세 정보를 엽니다")
     }
 
-    private var heroBackground: some View {
-        ZStack {
-            HStack(spacing: 0) {
-                TeamHeroBackground(team: summary.awayTeam, edge: .leading)
-                TeamHeroBackground(team: summary.homeTeam, edge: .trailing)
+    private var liveSituation: String {
+        [summary.outs.map { "\($0)사" }, HomeHeroGamePresentation.basesText(for: summary)].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private var countIndicators: some View {
+        HStack(spacing: 8) {
+            count("B", value: summary.balls, total: 3, color: Color(red: 84/255, green: 129/255, blue: 107/255))
+            count("S", value: summary.strikes, total: 2, color: Color(red: 184/255, green: 141/255, blue: 48/255))
+            count("O", value: summary.outs, total: 2, color: palette.tint)
+        }
+    }
+
+    private func count(_ label: String, value: Int?, total: Int, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Text(label).font(.system(size: 10)).foregroundStyle(palette.textSecondary)
+            ForEach(0..<total, id: \.self) { i in
+                Circle().fill(i < (value ?? 0) ? color : palette.ghostBorder).frame(width: 4, height: 4)
             }
-
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.20),
-                    palette.background.opacity(0.16),
-                    Color.black.opacity(0.22)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
+        }.accessibilityLabel("\(label) \(value.map(String.init) ?? "정보 없음")")
     }
 
-    private var vsBadge: some View {
-        ZStack {
-            Circle()
-                .fill(Color.black.opacity(0.34))
-                .frame(width: 58, height: 58)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                )
-                .shadow(color: Color.white.opacity(0.10), radius: 12)
-
-            Text("VS")
-                .font(.system(size: 23, weight: .black, design: .rounded))
-                .foregroundStyle(Color.white)
-        }
-        .frame(width: 62)
-    }
-
-    private var liveScorePanel: some View {
-        VStack(spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(summary.awayScore.map(String.init) ?? "-")
-                Text(":")
-                    .foregroundStyle(Color.white.opacity(0.62))
-                Text(summary.homeScore.map(String.init) ?? "-")
+    private func teamSide(_ team: Team, score: Int?, role: String, pitcher: String?) -> some View {
+        VStack(spacing: 10) {
+            Text(team.identity.shortLabel).font(.headline)
+            if summary.showsLiveOrFinalScore {
+                Text(score.map(String.init) ?? "–")
+                    .font(.system(size: 61, weight: .bold)).monospacedDigit()
+                    .foregroundStyle(team.id == appModel.settings.favoriteTeamID ? palette.tint : palette.textPrimary)
+            } else {
+                Text(HomeHeroGamePresentation.pitcherText(pitcher)).font(.subheadline).multilineTextAlignment(.center)
             }
-            .font(.system(size: 34, weight: .black, design: .rounded))
-            .monospacedDigit()
-            .foregroundStyle(Color.white)
-
-            HStack(spacing: 8) {
-                Text(KBOInningFormatter.korean(summary.inningText) ?? summary.status.title)
-                if let countText {
-                    Text(countText)
-                }
-                if let basesText {
-                    Text(basesText)
-                }
-            }
-            .font(.caption.weight(.heavy))
-            .foregroundStyle(Color.white.opacity(0.88))
-            .lineLimit(1)
-            .minimumScaleFactor(0.78)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(0.28))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.14), lineWidth: 0.75)
-        )
-    }
-
-    private var timeText: String {
-        HomeHeroGamePresentation.timeText(for: summary)
-    }
-
-    private var venueText: String {
-        HomeHeroGamePresentation.venueText(for: summary)
-    }
-
-    private var accessibilityLabel: String {
-        HomeHeroGamePresentation.accessibilityLabel(for: summary)
-    }
-
-    private var countText: String? {
-        HomeHeroGamePresentation.countText(for: summary)
-    }
-
-    private var basesText: String? {
-        HomeHeroGamePresentation.basesText(for: summary)
-    }
-}
-
-// TeamHeroBackground 구조체는 TeamHeroBackground 타입의 역할과 값을 정의합니다.
-private struct TeamHeroBackground: View {
-    let team: Team
-    let edge: HorizontalAlignment
-
-    var body: some View {
-        let identity = team.identity
-
-        ZStack(alignment: edge == .leading ? .leading : .trailing) {
-            LinearGradient(
-                colors: [
-                    identity.theme.heroEnd,
-                    identity.theme.accent.opacity(0.82),
-                    identity.theme.heroStart.opacity(0.70)
-                ],
-                startPoint: edge == .leading ? .topLeading : .topTrailing,
-                endPoint: edge == .leading ? .bottomTrailing : .bottomLeading
-            )
-            Color.black.opacity(0.18)
-
-            Text(identity.homeHeroWatermarkLabel)
-                .font(.system(size: 58, weight: .black, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.10))
-                .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .allowsTightening(true)
-                .frame(maxWidth: .infinity, alignment: edge == .leading ? .leading : .trailing)
-                .offset(x: edge == .leading ? -10 : 10, y: 12)
-        }
-        .frame(maxWidth: .infinity)
-        .clipped()
-        .accessibilityHidden(true)
-    }
-}
-
-// HeroTeamMatchupSide 구조체는 HeroTeamMatchupSide 타입의 역할과 값을 정의합니다.
-private struct HeroTeamMatchupSide: View {
-    let team: Team
-    let role: String
-    let pitcherName: String?
-    let alignment: HorizontalAlignment
-
-    var body: some View {
-        VStack(alignment: alignment, spacing: 10) {
-            VStack(alignment: alignment, spacing: 5) {
-                Text(team.identity.displayName)
-                    .font(.system(size: 28, weight: .black, design: .rounded))
-                    .foregroundStyle(Color.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.58)
-
-                VStack(alignment: alignment, spacing: 2) {
-                    Text(role)
-                        .font(.caption2.weight(.heavy))
-                        .foregroundStyle(Color.white.opacity(0.68))
-                    Text(pitcherText)
-                        .font(.subheadline.weight(.heavy))
-                        .foregroundStyle(Color.white.opacity(0.92))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
-    }
-
-    private var pitcherText: String {
-        HomeHeroGamePresentation.pitcherText(pitcherName)
+            Text(role).font(.caption).foregroundStyle(palette.textSecondary)
+        }.frame(maxWidth: .infinity)
     }
 }
 
@@ -438,17 +228,23 @@ private struct HomeFallbackStandingsSection: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline.weight(.bold))
-                    .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
+                    .foregroundStyle(appModel.favoriteStadiumPalette?.tint ?? .primary)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
             }
 
-            LazyVStack(spacing: 8) {
-                ForEach(snapshots) { snapshot in
-                    HomeFallbackStandingsRow(snapshot: snapshot)
+            DisclosureGroup {
+                LazyVStack(spacing: 8) {
+                    ForEach(snapshots) { snapshot in
+                        HomeFallbackStandingsRow(snapshot: snapshot)
+                    }
                 }
+                .padding(.top, 8)
+            } label: {
+                Text("전체 팀 기록 보기").font(.subheadline.weight(.semibold))
             }
+            .cardSurface(padding: 16, cornerRadius: 18)
         }
     }
 }
@@ -464,14 +260,14 @@ private struct HomeFallbackStandingsRow: View {
             Text("\(snapshot.rank)")
                 .font(.headline.weight(.heavy))
                 .monospacedDigit()
-                .foregroundStyle(appModel.favoriteStadiumPalette?.secondary ?? appModel.currentTheme.accent)
+                .foregroundStyle(appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent)
                 .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Text(snapshot.team.displayName)
                         .font(.subheadline.weight(.bold))
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
+                        .foregroundStyle(StadiumPalette.app.textPrimary)
                         .lineLimit(1)
                     Text(snapshot.recordText)
                         .font(.caption.weight(.semibold))
@@ -488,14 +284,8 @@ private struct HomeFallbackStandingsRow: View {
         }
         .cardSurface(
             padding: 12,
-            cornerRadius: 18,
-            fillColor: appModel.favoriteStadiumPalette?.elevatedCard ?? Color(.secondarySystemBackground)
+            cornerRadius: 18
         )
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill((appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.accent).opacity(0.9))
-                .frame(width: 4)
-        }
     }
 
     // metric 메서드는 이 타입의 주요 동작을 수행합니다.

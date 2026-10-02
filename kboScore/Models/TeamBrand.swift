@@ -11,6 +11,156 @@
 
 import SwiftUI
 
+struct StadiumPalette: Sendable {
+    let id: String
+    let primary: Color
+    let secondary: Color
+    let tint: Color
+    let secondaryTint: Color
+    let uniformSurface: Color
+    let background: Color
+    private let raisedSurface: Color
+
+    // 모든 응원 팀에 동일한 시안의 라이트·다크 색상을 적용합니다.
+    static let app = StadiumPalette()
+
+    private init() {
+        id = "app"
+        primary = Color(hex: 0xC9273A)
+        secondary = Color(hex: 0x101C2D, darkHex: 0xF3F0E2)
+        tint = Color(hex: 0xB52336, darkHex: 0xFF8B98)
+        secondaryTint = tint
+        uniformSurface = Color(hex: 0xFCFAF3, darkHex: 0x16263A)
+        background = Color(hex: 0xF3F0E2, darkHex: 0x0B1524)
+        raisedSurface = Color(hex: 0xE8E6DC, darkHex: 0x223349)
+    }
+
+    private init(
+        id: String, primaryHex: UInt32, secondaryHex: UInt32,
+        lightPrimaryHex: UInt32? = nil, darkPrimaryHex: UInt32? = nil,
+        lightSecondaryHex: UInt32? = nil, darkSecondaryHex: UInt32? = nil,
+        uniformSurfaceHex: UInt32 = 0xFFFFFF,
+        awaySurfaceHex: UInt32,
+        awayPrimaryHex: UInt32,
+        awaySecondaryHex: UInt32
+    ) {
+        self.id = id
+        primary = Color(hex: primaryHex, darkHex: awayPrimaryHex)
+        secondary = Color(hex: secondaryHex, darkHex: awaySecondaryHex)
+        tint = Color(hex: primaryHex, lightHex: lightPrimaryHex, darkHex: darkPrimaryHex ?? awayPrimaryHex)
+        secondaryTint = Color(hex: secondaryHex, lightHex: lightSecondaryHex, darkHex: darkSecondaryHex ?? awaySecondaryHex)
+        uniformSurface = Color(hex: uniformSurfaceHex, darkHex: awaySurfaceHex)
+
+        // 라이트는 홈 유니폼, 다크는 원정 유니폼의 바탕·로고·배색을 함께 전환합니다.
+        // 화면용 원정 바탕은 유니폼의 색감을 유지하며 글자를 읽기 좋게 낮춘 명도입니다.
+        func blend(_ base: UInt32, with color: UInt32, amount: Double) -> UInt32 {
+            [16, 8, 0].reduce(UInt32(0)) { result, shift in
+                let baseComponent = Double((base >> shift) & 0xFF)
+                let teamComponent = Double((color >> shift) & 0xFF)
+                let component = UInt32((baseComponent * (1 - amount) + teamComponent * amount).rounded())
+                return result | (component << shift)
+            }
+        }
+        background = Color(
+            hex: blend(id == "lotte" ? 0xECE9DD : 0xF2F2F7, with: primaryHex, amount: 0.10),
+            darkHex: blend(awaySurfaceHex, with: 0x000000, amount: 0.60)
+        )
+        raisedSurface = Color(
+            hex: blend(uniformSurfaceHex, with: primaryHex, amount: 0.04),
+            darkHex: blend(awaySurfaceHex, with: 0xFFFFFF, amount: 0.06)
+        )
+    }
+
+    var statusRed: Color { .red }
+    var sectionBackground: Color { uniformSurface }
+    var elevatedCard: Color { uniformSurface }
+    var elevatedCardStrong: Color { raisedSurface }
+    var recessedSurface: Color { raisedSurface }
+    var glassSurface: Color { uniformSurface }
+    var navigationSurface: Color { uniformSurface }
+    var tabBarSurface: Color { id == "app" ? Color(hex: 0xFCFAF3, darkHex: 0x1A2A3F) : uniformSurface }
+    var tabBarSelectionSurface: Color { id == "app" ? Color(hex: 0xF1DDDA, darkHex: 0x3D2739) : raisedSurface }
+    var bellControlSurface: Color { uniformSurface }
+    var textPrimary: Color { id == "app" ? Color(hex: 0x101C2D, darkHex: 0xF3F0E2) : Color(.label) }
+    var textSecondary: Color { id == "app" ? Color(hex: 0x646860, darkHex: 0xACB9CA) : Color(hex: 0x595960, darkHex: 0xCFD3DB) }
+    var ghostBorder: Color { id == "app" ? Color(hex: 0xDEDCCD, darkHex: 0x2C3B4F) : secondaryTint.opacity(0.28) }
+    var ambientShadow: Color { .clear }
+    var weather: Color { .orange }
+    var winDayFill: Color { tint.opacity(0.14) }
+    var uniformTrim: LinearGradient {
+        LinearGradient(colors: [primary, secondary], startPoint: .leading, endPoint: .trailing)
+    }
+
+    static let doosan = StadiumPalette(
+        id: "doosan", primaryHex: 0xC92135, secondaryHex: 0x1A1D29,
+        lightPrimaryHex: 0xB51A2D, darkSecondaryHex: 0xFF9CA5,
+        awaySurfaceHex: 0x17233B, awayPrimaryHex: 0xFFFFFF, awaySecondaryHex: 0xC92135
+    )
+    static let hanwha = StadiumPalette(
+        id: "hanwha", primaryHex: 0xEF5F18, secondaryHex: 0x161616,
+        lightPrimaryHex: 0xAE3905, darkPrimaryHex: 0xFF9A59,
+        awaySurfaceHex: 0x1C2938, awayPrimaryHex: 0xEF5F18, awaySecondaryHex: 0xFFFFFF
+    )
+    static let kia = StadiumPalette(
+        id: "kia", primaryHex: 0x161616, secondaryHex: 0xD81F25,
+        lightSecondaryHex: 0xB41219, darkSecondaryHex: 0xFFB0B5,
+        awaySurfaceHex: 0x5C1825, awayPrimaryHex: 0xFFFFFF, awaySecondaryHex: 0x161616
+    )
+    static let kt = StadiumPalette(
+        id: "kt", primaryHex: 0x0A0A0A, secondaryHex: 0xFFFFFF,
+        lightSecondaryHex: 0x0A0A0A,
+        awaySurfaceHex: 0x19191B, awayPrimaryHex: 0xFFFFFF, awaySecondaryHex: 0xFFFFFF
+    )
+    static let lg = StadiumPalette(
+        id: "lg", primaryHex: 0xC3042F, secondaryHex: 0x161616,
+        darkSecondaryHex: 0xFF92AD,
+        awaySurfaceHex: 0x1F1F22, awayPrimaryHex: 0xFFFFFF, awaySecondaryHex: 0xC3042F
+    )
+    static let lotte = StadiumPalette(
+        id: "lotte", primaryHex: 0xC9273A, secondaryHex: 0x101C2D,
+        lightPrimaryHex: 0xAA161E, darkPrimaryHex: 0xFF8F9B,
+        uniformSurfaceHex: 0xF3F0E2,
+        awaySurfaceHex: 0x101C2D, awayPrimaryHex: 0xC9273A, awaySecondaryHex: 0xF3F0E2
+    )
+    static let nc = StadiumPalette(
+        id: "nc", primaryHex: 0x173052, secondaryHex: 0xC7A079,
+        darkPrimaryHex: 0xE4BD8D, lightSecondaryHex: 0x795633, darkSecondaryHex: 0xB9CEE8,
+        awaySurfaceHex: 0x193654, awayPrimaryHex: 0xC7A079, awaySecondaryHex: 0x173052
+    )
+    static let kiwoom = StadiumPalette(
+        id: "kiwoom", primaryHex: 0x570E29, secondaryHex: 0xC55E82,
+        lightSecondaryHex: 0x9F355B, darkSecondaryHex: 0xFFB0CA,
+        awaySurfaceHex: 0x570E29, awayPrimaryHex: 0xFFFFFF, awaySecondaryHex: 0xC55E82
+    )
+    static let samsung = StadiumPalette(
+        id: "samsung", primaryHex: 0x17469F, secondaryHex: 0xFFFFFF,
+        lightSecondaryHex: 0x17469F,
+        awaySurfaceHex: 0x173F86, awayPrimaryHex: 0xFFFFFF, awaySecondaryHex: 0xFFFFFF
+    )
+    static let ssg = StadiumPalette(
+        id: "ssg", primaryHex: 0xCE1524, secondaryHex: 0xF6CF25,
+        lightPrimaryHex: 0xB60F1D, lightSecondaryHex: 0x755C00,
+        awaySurfaceHex: 0x6D1524, awayPrimaryHex: 0xFFFFFF, awaySecondaryHex: 0xF6CF25
+    )
+}
+
+private extension Color {
+    // 유니폼 원색과 별개로, 작은 글자와 버튼에 쓰는 밝기를 표시 모드에 맞춥니다.
+    init(hex: UInt32, lightHex: UInt32? = nil, darkHex: UInt32? = nil) {
+        let light = lightHex ?? hex
+        let dark = darkHex ?? hex
+        self.init(uiColor: UIColor { traits in
+            let resolved = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(
+                red: CGFloat((resolved >> 16) & 0xFF) / 255,
+                green: CGFloat((resolved >> 8) & 0xFF) / 255,
+                blue: CGFloat(resolved & 0xFF) / 255,
+                alpha: 1
+            )
+        })
+    }
+}
+
 // TeamThemeMode 열거형는 TeamThemeMode 타입의 역할과 값을 정의합니다.
 enum TeamThemeMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case systemDefault = "시스템 기본"
@@ -46,6 +196,7 @@ struct TeamTheme: Sendable {
     let badgeForeground: Color
     let scoreboardBackground: Color
     let shadowTint: Color
+    let uniformPalette: StadiumPalette?
 
     nonisolated static let neutral = TeamTheme(
         id: .neutral,
@@ -57,8 +208,26 @@ struct TeamTheme: Sendable {
         badgeBackground: Color(.secondarySystemBackground),
         badgeForeground: Color(hex: 0x1C47AB),
         scoreboardBackground: Color(.secondarySystemBackground),
-        shadowTint: Color(hex: 0x1C47AB).opacity(0.12)
+        shadowTint: Color(hex: 0x1C47AB).opacity(0.12),
+        uniformPalette: nil
     )
+
+    // 화면 모드에 따라 홈·원정 유니폼 색상을 같은 팔레트에서 해석합니다.
+    nonisolated static func homeUniform(_ palette: StadiumPalette) -> TeamTheme {
+        TeamTheme(
+            id: TeamThemeID(rawValue: palette.id) ?? .neutral,
+            accent: palette.tint,
+            accentSecondary: palette.secondary,
+            heroStart: palette.uniformSurface,
+            heroEnd: palette.uniformSurface,
+            chipBackground: palette.tint.opacity(0.08),
+            badgeBackground: palette.uniformSurface,
+            badgeForeground: palette.tint,
+            scoreboardBackground: palette.uniformSurface,
+            shadowTint: .clear,
+            uniformPalette: palette
+        )
+    }
 
     // resolve 메서드는 입력 데이터를 판별하거나 정렬해 사용할 대상을 결정합니다.
     nonisolated static func resolve(for teamID: String?) -> TeamTheme {
@@ -85,18 +254,7 @@ struct TeamIdentity: Sendable {
             monogram: "두산",
             homeHeroWatermarkLabel: "Bears",
             themeID: .doosan,
-            theme: TeamTheme(
-                id: .doosan,
-                accent: Color(hex: 0x1A1D29),
-                accentSecondary: Color(hex: 0xFDFCF8),
-                heroStart: Color(hex: 0x12305C),
-                heroEnd: Color(hex: 0x1A1D29),
-                chipBackground: Color(hex: 0x1A1D29).opacity(0.12),
-                badgeBackground: Color(hex: 0x12305C),
-                badgeForeground: Color(hex: 0xFDFCF8),
-                scoreboardBackground: Color(hex: 0x263247),
-                shadowTint: Color(hex: 0x1A1D29).opacity(0.22)
-            )
+            theme: .homeUniform(.doosan)
         ),
         "hanwha": TeamIdentity(
             id: "hanwha",
@@ -105,18 +263,7 @@ struct TeamIdentity: Sendable {
             monogram: "한화",
             homeHeroWatermarkLabel: "Eagles",
             themeID: .hanwha,
-            theme: TeamTheme(
-                id: .hanwha,
-                accent: Color(hex: 0xEF5F18),
-                accentSecondary: Color(hex: 0xFDFCF8),
-                heroStart: Color(hex: 0x0E0E0E),
-                heroEnd: Color(hex: 0xEF5F18),
-                chipBackground: Color(hex: 0xEF5F18).opacity(0.14),
-                badgeBackground: Color(hex: 0x191919),
-                badgeForeground: Color(hex: 0xFDFCF8),
-                scoreboardBackground: Color(hex: 0x1F1F1F),
-                shadowTint: Color(hex: 0xEF5F18).opacity(0.14)
-            )
+            theme: .homeUniform(.hanwha)
         ),
         "kia": TeamIdentity(
             id: "kia",
@@ -125,18 +272,7 @@ struct TeamIdentity: Sendable {
             monogram: "KIA",
             homeHeroWatermarkLabel: "Tigers",
             themeID: .kia,
-            theme: TeamTheme(
-                id: .kia,
-                accent: Color(hex: 0xD81F25),
-                accentSecondary: Color(hex: 0xD81F25),
-                heroStart: Color(hex: 0x061520),
-                heroEnd: Color(hex: 0xD81F25),
-                chipBackground: Color(hex: 0xD81F25).opacity(0.12),
-                badgeBackground: Color(hex: 0x10202D),
-                badgeForeground: Color(hex: 0xD81F25),
-                scoreboardBackground: Color(hex: 0x132633),
-                shadowTint: Color(hex: 0xD81F25).opacity(0.10)
-            )
+            theme: .homeUniform(.kia)
         ),
         "kiwoom": TeamIdentity(
             id: "kiwoom",
@@ -145,18 +281,7 @@ struct TeamIdentity: Sendable {
             monogram: "키움",
             homeHeroWatermarkLabel: "Heroes",
             themeID: .kiwoom,
-            theme: TeamTheme(
-                id: .kiwoom,
-                accent: Color(hex: 0x8E0320),
-                accentSecondary: Color(hex: 0x5C3A21),
-                heroStart: Color(hex: 0x131313),
-                heroEnd: Color(hex: 0x8E0320),
-                chipBackground: Color(hex: 0x8E0320).opacity(0.12),
-                badgeBackground: Color(hex: 0x1C1B1B),
-                badgeForeground: Color(hex: 0x5C3A21),
-                scoreboardBackground: Color(hex: 0x2A2A2A),
-                shadowTint: Color(hex: 0x8E0320).opacity(0.20)
-            )
+            theme: .homeUniform(.kiwoom)
         ),
         "kt": TeamIdentity(
             id: "kt",
@@ -165,18 +290,7 @@ struct TeamIdentity: Sendable {
             monogram: "KT",
             homeHeroWatermarkLabel: "Wiz",
             themeID: .kt,
-            theme: TeamTheme(
-                id: .kt,
-                accent: Color(hex: 0x0A0A0A),
-                accentSecondary: Color(hex: 0xFDFCF8),
-                heroStart: Color(hex: 0x131313),
-                heroEnd: Color(hex: 0x0A0A0A),
-                chipBackground: Color(hex: 0x0A0A0A).opacity(0.12),
-                badgeBackground: Color(hex: 0x201F1F),
-                badgeForeground: Color(hex: 0xFDFCF8),
-                scoreboardBackground: Color(hex: 0x353534),
-                shadowTint: Color.black.opacity(0.18)
-            )
+            theme: .homeUniform(.kt)
         ),
         "lg": TeamIdentity(
             id: "lg",
@@ -185,18 +299,7 @@ struct TeamIdentity: Sendable {
             monogram: "LG",
             homeHeroWatermarkLabel: "Twins",
             themeID: .lg,
-            theme: TeamTheme(
-                id: .lg,
-                accent: Color(hex: 0xC3042F),
-                accentSecondary: Color(hex: 0x161616),
-                heroStart: Color(hex: 0x131313),
-                heroEnd: Color(hex: 0x161616),
-                chipBackground: Color(hex: 0x161616).opacity(0.12),
-                badgeBackground: Color(hex: 0x1C1B1B),
-                badgeForeground: Color(hex: 0xC3042F),
-                scoreboardBackground: Color(hex: 0x2A2A2A),
-                shadowTint: Color.black.opacity(0.18)
-            )
+            theme: .homeUniform(.lg)
         ),
         "lotte": TeamIdentity(
             id: "lotte",
@@ -205,18 +308,7 @@ struct TeamIdentity: Sendable {
             monogram: "롯데",
             homeHeroWatermarkLabel: "Giants",
             themeID: .lotte,
-            theme: TeamTheme(
-                id: .lotte,
-                accent: Color(hex: 0x002F6C),
-                accentSecondary: Color(hex: 0xE60033),
-                heroStart: Color(hex: 0xE60033),
-                heroEnd: Color(hex: 0x002F6C),
-                chipBackground: Color(hex: 0x002F6C).opacity(0.12),
-                badgeBackground: Color(hex: 0xF7F9FC),
-                badgeForeground: Color(hex: 0xE60033),
-                scoreboardBackground: Color.white,
-                shadowTint: Color(hex: 0x002F6C).opacity(0.12)
-            )
+            theme: .homeUniform(.lotte)
         ),
         "nc": TeamIdentity(
             id: "nc",
@@ -225,18 +317,7 @@ struct TeamIdentity: Sendable {
             monogram: "NC",
             homeHeroWatermarkLabel: "Dinos",
             themeID: .nc,
-            theme: TeamTheme(
-                id: .nc,
-                accent: Color(hex: 0x191970),
-                accentSecondary: Color(hex: 0xC7A079),
-                heroStart: Color(hex: 0x0F141B),
-                heroEnd: Color(hex: 0x191970),
-                chipBackground: Color(hex: 0x191970).opacity(0.16),
-                badgeBackground: Color(hex: 0x1B2027),
-                badgeForeground: Color(hex: 0xC7A079),
-                scoreboardBackground: Color(hex: 0x30353D),
-                shadowTint: Color(hex: 0x191970).opacity(0.20)
-            )
+            theme: .homeUniform(.nc)
         ),
         "samsung": TeamIdentity(
             id: "samsung",
@@ -245,18 +326,7 @@ struct TeamIdentity: Sendable {
             monogram: "삼성",
             homeHeroWatermarkLabel: "Lions",
             themeID: .samsung,
-            theme: TeamTheme(
-                id: .samsung,
-                accent: Color(hex: 0x0047AB),
-                accentSecondary: Color(hex: 0xFDFCF8),
-                heroStart: Color(hex: 0xFDFCF8),
-                heroEnd: Color(hex: 0x0047AB),
-                chipBackground: Color(hex: 0x0047AB).opacity(0.12),
-                badgeBackground: Color(hex: 0xECEEF3),
-                badgeForeground: Color(hex: 0xFDFCF8),
-                scoreboardBackground: Color.white,
-                shadowTint: Color(hex: 0x0047AB).opacity(0.12)
-            )
+            theme: .homeUniform(.samsung)
         ),
         "ssg": TeamIdentity(
             id: "ssg",
@@ -265,18 +335,7 @@ struct TeamIdentity: Sendable {
             monogram: "SSG",
             homeHeroWatermarkLabel: "Landers",
             themeID: .ssg,
-            theme: TeamTheme(
-                id: .ssg,
-                accent: Color(hex: 0xB80F0A),
-                accentSecondary: Color(hex: 0xFDFCF8),
-                heroStart: Color(hex: 0xFDFCF8),
-                heroEnd: Color(hex: 0xB80F0A),
-                chipBackground: Color(hex: 0xB80F0A).opacity(0.12),
-                badgeBackground: Color(hex: 0xF3F3F3),
-                badgeForeground: Color(hex: 0xFDFCF8),
-                scoreboardBackground: Color.white,
-                shadowTint: Color(hex: 0xB80F0A).opacity(0.12)
-            )
+            theme: .homeUniform(.ssg)
         )
     ]
 }
@@ -291,19 +350,6 @@ extension Team {
             homeHeroWatermarkLabel: shortName,
             themeID: .neutral,
             theme: .neutral
-        )
-    }
-}
-
-private extension Color {
-    // 이 초기화 메서드는 인스턴스 생성에 필요한 값을 설정합니다.
-    init(hex: UInt32, alpha: Double = 1) {
-        self.init(
-            .sRGB,
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255,
-            opacity: alpha
         )
     }
 }

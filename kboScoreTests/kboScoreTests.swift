@@ -7049,16 +7049,17 @@ struct kboScoreTests {
         #expect(team.identity.themeID == .neutral)
     }
 
-    // currentThemeFollowsFavoriteTeamPreference 메서드는 이 타입의 주요 동작을 수행합니다.
-    @Test func currentThemeFollowsFavoriteTeamPreference() async throws {
+    @Test func currentThemeStaysUnifiedWhenFavoriteTeamChanges() async throws {
         let model = AppModel(bootstrap: MockKBOData.makeBootstrap(), usePersistedSettings: false)
-
-        model.settings.favoriteTeamID = "ssg"
-        model.settings.teamThemeMode = .favoriteTeam
-        #expect(model.currentTheme.id == .ssg)
-
-        model.settings.teamThemeMode = .systemDefault
-        #expect(model.currentTheme.id == .neutral)
+        for teamID in TeamIdentity.catalog.keys {
+            model.settings.favoriteTeamID = teamID
+            for mode in TeamThemeMode.allCases {
+                model.settings.teamThemeMode = mode
+                #expect(model.currentTheme.uniformPalette?.id == "app")
+                #expect(model.favoriteStadiumPalette?.id == "app")
+                #expect(model.favoriteTeam?.id == teamID)
+            }
+        }
     }
 
     // favoriteTeamOnboardingCatalogContainsAllTenTeamsOffline 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -7151,7 +7152,7 @@ struct kboScoreTests {
         model.completeFavoriteTeamOnboarding(with: "hanwha")
 
         #expect(model.settings.favoriteTeamID == "hanwha")
-        #expect(model.currentTheme.id == .hanwha)
+        #expect(model.currentTheme.uniformPalette?.id == "app")
         #expect(model.favoriteTeam?.id == "hanwha")
     }
 

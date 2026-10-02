@@ -1,277 +1,144 @@
-//
-//  AttendanceView.swift
-//  kboScore
-//  기능 설명: 직관 기록과 관전 성적 대시보드 화면을 구성합니다.
-//  사용자가 경기 상태와 설정을 빠르게 이해하도록 도메인 상태를 화면 구조에 직접 매핑합니다.
-//  SwiftUI 상태 갱신, 접근성, 작은 화면 레이아웃에서 정보가 겹치지 않도록 표시 조건을 제한합니다.
-//  TODO : 반복되는 화면 조각은 재사용 가능한 컴포넌트로 분리하고 미리보기 케이스를 보강합니다.
-//
-//  Created by Codex on 5/20/26.
-//
-
 import SwiftUI
 
-// AttendanceView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 struct AttendanceView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         let dashboard = appModel.attendanceDashboard
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 16) {
+                    AppScreenHeader(title: "직관 기록", subtitle: "우리 팀과 함께한 나의 야구")
                     if appModel.settings.favoriteTeamID == nil {
-                        EmptyStateView(
-                            systemImage: "person.crop.circle.badge.questionmark",
-                            title: "응원팀을 선택해주세요",
-                            message: "응원팀 경기의 직관 기록을 모아 보여드립니다."
-                        )
+                        EmptyStateView(systemImage: "person.crop.circle.badge.questionmark", title: "응원팀을 선택해주세요", message: "응원팀 경기의 직관 기록을 모아 보여드립니다.")
                     } else {
-                        summarySection(dashboard)
-                        attendedGamesSection(dashboard)
+                        overallSummary(dashboard.overall)
+                        if dynamicTypeSize.isAccessibilitySize {
+                            VStack(spacing: 12) {
+                                sideSummary("홈", icon: "house", summary: dashboard.home)
+                                sideSummary("원정", icon: "airplane", summary: dashboard.away)
+                            }
+                        } else {
+                            HStack(spacing: 12) {
+                                sideSummary("홈", icon: "house", summary: dashboard.home)
+                                sideSummary("원정", icon: "airplane", summary: dashboard.away)
+                            }
+                        }
+                        if !dashboard.hasGames {
+                            EmptyStateView(systemImage: "ticket", title: "직관 기록 없음", message: "경기 상세에서 직관한 경기로 표시하면 이곳에 기록됩니다.")
+                        } else {
+                            records("예정된 직관", records: dashboard.upcomingGames)
+                            records("지난 직관", records: dashboard.pastGames)
+                            Text("경기를 선택하면 상세 기록을 볼 수 있어요.")
+                                .font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                        }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 22)
+                .padding(.bottom, 18)
             }
-            .background {
-                if let palette = appModel.favoriteStadiumPalette {
-                    LinearGradient(
-                        colors: [palette.background, palette.sectionBackground],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                } else {
-                    KBOLivePalette.background
-                        .ignoresSafeArea(edges: .bottom)
-                }
-            }
-            .navigationTitle("직관 기록")
-            .navigationBarTitleDisplayMode(.inline)
-            .stadiumNavigationChrome(appModel.favoriteStadiumPalette)
-            .notificationsToolbarButton()
-            .navigationDestination(for: String.self) { gameIdentity in
-                GameDetailView(gameIdentity: gameIdentity)
-            }
-            .task {
-                await appModel.refreshAttendanceRecordsFromServer()
-            }
+            .dashboardScreen()
+            .navigationDestination(for: String.self) { GameDetailView(gameIdentity: $0) }
+            .task { await appModel.refreshAttendanceRecordsFromServer() }
         }
     }
 
-    private func summarySection(_ dashboard: AttendanceDashboard) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionTitleView(title: "직관 성적")
-            VStack(spacing: 8) {
-                AttendanceSummaryCard(title: "전체", summary: dashboard.overall, iconName: "checkmark.circle.fill")
-                HStack(spacing: 8) {
-                    AttendanceSummaryCard(title: "홈", summary: dashboard.home, iconName: "house.fill")
-                    AttendanceSummaryCard(title: "원정", summary: dashboard.away, iconName: "airplane")
-                }
+    private func overallSummary(_ summary: AttendanceRecordSummary) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("전체 기록").font(.caption.weight(.semibold))
+                    .foregroundStyle(StadiumPalette.app.tint)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(StadiumPalette.app.tabBarSelectionSurface, in: Capsule())
+                Spacer()
+                Text(appModel.favoriteTeam?.identity.displayName ?? "")
+                    .font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func attendedGamesSection(_ dashboard: AttendanceDashboard) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !dashboard.hasGames {
-                EmptyStateView(
-                    systemImage: "checkmark.circle",
-                    title: "직관 기록 없음",
-                    message: "경기 상세에서 직관한 경기로 표시하면 이곳에 기록됩니다."
-                )
+            Text("나의 직관 성적").font(.subheadline.weight(.semibold))
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 12) { overallMetrics(summary) }
             } else {
-                if !dashboard.upcomingGames.isEmpty {
-                    SectionTitleView(title: "예정된 직관")
-                    LazyVStack(spacing: 8) {
-                        ForEach(dashboard.upcomingGames) { record in
-                            NavigationLink(value: record.gameIdentity) {
-                                AttendanceGameRecordRow(record: record)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                if !dashboard.pastGames.isEmpty {
-                    SectionTitleView(title: "지난 직관")
-                    LazyVStack(spacing: 8) {
-                        ForEach(dashboard.pastGames) { record in
-                            NavigationLink(value: record.gameIdentity) {
-                                AttendanceGameRecordRow(record: record)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
+                HStack(spacing: 8) { overallMetrics(summary) }
             }
-        }
+        }.cardSurface(padding: 16, cornerRadius: 22)
     }
-}
 
-// AttendanceSummaryCard 구조체는 AttendanceSummaryCard 타입의 역할과 값을 정의합니다.
-private struct AttendanceSummaryCard: View {
-    @Environment(AppModel.self) private var appModel
-    let title: String
-    let summary: AttendanceRecordSummary
-    let iconName: String
+    @ViewBuilder private func overallMetrics(_ summary: AttendanceRecordSummary) -> some View {
+        AppMetric(value: summary.gamesText, label: "전체 직관")
+        AppMetric(value: "\(summary.wins)승 \(summary.losses)패", label: "\(summary.draws)무")
+        AppMetric(value: summary.winPercentageText, label: "직관 승률", highlighted: true)
+    }
 
-    var body: some View {
+    private func sideSummary(_ title: String, icon: String, summary: AttendanceRecordSummary) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: iconName)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(appModel.favoriteStadiumPalette?.secondary ?? appModel.currentTheme.accent)
-                Text(title)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
+            HStack(spacing: 6) {
+                Image(systemName: icon).foregroundStyle(StadiumPalette.app.textSecondary)
+                Text(title).font(.subheadline.weight(.semibold))
                 Spacer(minLength: 0)
+                Text(summary.gamesText).font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
             }
+            Text(summary.recordText).font(.caption).lineLimit(1).minimumScaleFactor(0.75)
+            HStack {
+                Text("승률").font(.caption2).foregroundStyle(StadiumPalette.app.textSecondary)
+                Spacer()
+                Text(summary.winPercentageText).font(.title3.weight(.semibold)).monospacedDigit().foregroundStyle(StadiumPalette.app.tint)
+            }
+        }.frame(maxWidth: .infinity).cardSurface(padding: 14, cornerRadius: 18)
+    }
 
-            HStack(spacing: 8) {
-                AttendanceMetricView(title: "경기", value: summary.gamesText)
-                AttendanceMetricView(title: "기록", value: summary.recordText)
-                AttendanceMetricView(title: "승률", value: summary.winPercentageText, isHighlighted: true)
-            }
+    @ViewBuilder private func records(_ title: String, records: [AttendanceGameRecord]) -> some View {
+        if !records.isEmpty {
+            AppSectionTitle(title: title, detail: "\(records.count)경기")
+            VStack(spacing: 0) {
+                ForEach(Array(records.enumerated()), id: \.element.id) { index, record in
+                    if index > 0 { Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1) }
+                    NavigationLink(value: record.gameIdentity) {
+                        AttendanceGameRecordRow(record: record)
+                    }.buttonStyle(.plain)
+                }
+            }.cardSurface(padding: 16, cornerRadius: 20)
         }
-        .cardSurface(
-            padding: 12,
-            cornerRadius: 18,
-            fillColor: appModel.favoriteStadiumPalette?.sectionBackground
-        )
     }
 }
 
-// AttendanceMetricView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
-private struct AttendanceMetricView: View {
-    @Environment(AppModel.self) private var appModel
-    let title: String
-    let value: String
-    var isHighlighted = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-            Text(value)
-                .font(.footnote.weight(.heavy))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .foregroundStyle(
-                    isHighlighted
-                        ? (appModel.favoriteStadiumPalette?.secondary ?? appModel.currentTheme.accent)
-                        : (appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                )
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// AttendanceGameRecordRow 구조체는 AttendanceGameRecordRow 타입의 역할과 값을 정의합니다.
 private struct AttendanceGameRecordRow: View {
-    @Environment(AppModel.self) private var appModel
     let record: AttendanceGameRecord
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
                     Text(record.side.title)
-                        .font(.caption2.weight(.heavy))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(resultTint.opacity(0.12), in: Capsule())
-                        .foregroundStyle(resultTint)
-                    Text(record.matchupText)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                        .lineLimit(1)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(record.isUpcomingAttendance ? StadiumPalette.app.tint : StadiumPalette.app.textSecondary)
+                        .padding(.horizontal, record.isUpcomingAttendance ? 10 : 0)
+                        .padding(.vertical, 4)
+                        .background(record.isUpcomingAttendance ? StadiumPalette.app.tabBarSelectionSurface : .clear, in: Capsule())
+                    Text(record.matchupText).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.75)
                 }
-
-                Text("\(dateText) · \(record.stadium)")
-                    .font(.caption)
-                    .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                    .lineLimit(1)
+                Text("\(record.gameDate.formatted(.dateTime.month().day().weekday())) · \(record.stadium)")
+                    .font(.caption).foregroundStyle(StadiumPalette.app.textSecondary).lineLimit(1).minimumScaleFactor(0.8)
             }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 5) {
-                Text(trailingText)
-                    .font(.footnote.weight(.heavy))
-                    .monospacedDigit()
-                    .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Text(resultText)
-                    .font(.caption2.weight(.heavy))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(resultTint.opacity(0.14), in: Capsule())
-                    .foregroundStyle(resultTint)
+            Spacer(minLength: 0)
+            if !record.isUpcomingAttendance {
+                VStack(alignment: .trailing, spacing: 8) {
+                    Text(record.scoreText).font(.headline).monospacedDigit()
+                    Text(resultText).font(.caption)
+                }.foregroundStyle(record.result == .win ? StadiumPalette.app.tint : StadiumPalette.app.textPrimary)
             }
-        }
-        .cardSurface(
-            padding: 12,
-            cornerRadius: 18,
-            fillColor: appModel.favoriteStadiumPalette?.sectionBackground
-        )
-    }
-
-    private var dateText: String {
-        if record.result == nil && record.isUpcomingAttendance {
-            return record.gameDate.formatted(.dateTime.month(.twoDigits).day(.twoDigits).weekday(.abbreviated).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-        }
-        return record.gameDate.formatted(.dateTime.month(.twoDigits).day(.twoDigits).weekday(.abbreviated))
-    }
-
-    private var trailingText: String {
-        if record.result == nil && record.isUpcomingAttendance {
-            return record.gameDate.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-        }
-        return record.scoreText
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+        }.padding(.vertical, 8)
     }
 
     private var resultText: String {
-        guard let result = record.result else {
-            return record.gameStatus == .upcoming ? "경기 예정" : record.gameStatus.title
-        }
-        switch result {
-        case .win:
-            return "승"
-        case .loss:
-            return "패"
-        case .tie:
-            return "무"
-        }
-    }
-
-    private var resultTint: Color {
-        guard let result = record.result else {
-            if record.gameStatus.isLiveLike {
-                return KBOLivePalette.live
-            }
-            if record.gameStatus.isFinishedLike {
-                return KBOLivePalette.final
-            }
-            return appModel.favoriteStadiumPalette?.secondary ?? appModel.currentTheme.accent
-        }
-        switch result {
-        case .win:
-            return KBOLivePalette.live
-        case .loss:
-            return KBOLivePalette.final
-        case .tie:
-            return .secondary
+        switch record.result {
+        case .win: "승"
+        case .loss: "패"
+        case .tie: "무"
+        case nil: record.gameStatus.title
         }
     }
 }
 
-#Preview {
-    AttendanceView()
-        .environment(AppModel.previewModel())
-}
+#Preview { AttendanceView().environment(AppModel.previewModel()) }

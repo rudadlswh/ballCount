@@ -9,13 +9,14 @@ import SwiftUI
 
 struct NotificationsView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let palette = notificationPalette
 
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+            List {
+                Section {
                     if let statusMessage = appModel.statusMessage(for: .notifications) {
                         NotificationsStatusBannerView(message: statusMessage, palette: palette)
                     }
@@ -29,10 +30,9 @@ struct NotificationsView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             ForEach(NotificationListFilter.allCases) { filter in
-                                NotificationsFilterChip(
+                                FilterChip(
                                     title: filter.rawValue,
                                     isSelected: appModel.notificationFilter == filter,
-                                    palette: palette,
                                     action: { appModel.notificationFilter = filter }
                                 )
                             }
@@ -48,11 +48,8 @@ struct NotificationsView: View {
                             palette: palette
                         )
                     } else {
-                        LazyVStack(spacing: 8) {
-                            ForEach(appModel.filteredNotifications) { item in
-                                NotificationSwipeToDeleteRow {
-                                    appModel.deleteNotification(item.id)
-                                } content: {
+                        ForEach(appModel.filteredNotifications) { item in
+                                Group {
                                     if let gameIdentity = item.preferredGameNavigationIdentity {
                                         NavigationLink {
                                             GameDetailView(gameIdentity: gameIdentity)
@@ -76,110 +73,42 @@ struct NotificationsView: View {
                                         .buttonStyle(.plain)
                                     }
                                 }
-                            }
+                                .swipeActions(edge: .trailing) {
+                                    Button("삭제", systemImage: "trash", role: .destructive) {
+                                        appModel.deleteNotification(item.id)
+                                    }
+                                }
+                                .accessibilityAction(named: "삭제") {
+                                    appModel.deleteNotification(item.id)
+                                }
                         }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             .background {
-                LinearGradient(
-                    colors: [palette.background, palette.sectionBackground],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                palette.background
                 .ignoresSafeArea()
             }
             .navigationTitle("알림")
-            .modifier(NotificationsNavigationBarModifier(palette: palette))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("닫기", systemImage: "xmark") { dismiss() }
+                }
+            }
             .refreshable {
                 await appModel.refreshNotifications()
             }
         }
-        .preferredColorScheme(.dark)
         .presentationBackground(palette.background)
     }
 
     private var notificationPalette: StadiumPalette {
         appModel.favoriteStadiumPalette ?? .doosan
-    }
-}
-
-private struct NotificationSwipeToDeleteRow<Content: View>: View {
-    let onDelete: () -> Void
-    @ViewBuilder let content: Content
-    @State private var isRevealed = false
-    @State private var dragOffset: CGFloat = 0
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            Button(role: .destructive, action: onDelete) {
-                Label("삭제", systemImage: "trash")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(width: 76)
-                    .frame(maxHeight: .infinity)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .background(Color.red, in: RoundedRectangle(cornerRadius: 16))
-
-            content
-                .offset(x: max(-76, min(0, (isRevealed ? -76 : 0) + dragOffset)))
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 20)
-                        .onChanged { value in
-                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                            dragOffset = value.translation.width
-                        }
-                        .onEnded { value in
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                isRevealed = value.translation.width < -40 ||
-                                    (isRevealed && value.translation.width < 40)
-                                dragOffset = 0
-                            }
-                        }
-                )
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-private struct NotificationsNavigationBarModifier: ViewModifier {
-    let palette: StadiumPalette
-
-    func body(content: Content) -> some View {
-        content
-            .toolbarColorScheme(palette.usesLightForegroundStyle ? .light : .dark, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(palette.navigationSurface, for: .navigationBar)
-    }
-}
-
-private struct NotificationsFilterChip: View {
-    let title: String
-    let isSelected: Bool
-    let palette: StadiumPalette
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(isSelected ? Color.white : palette.textSecondary)
-                .padding(.horizontal, 15)
-                .padding(.vertical, 10)
-                .frame(minHeight: 44)
-                .background(
-                    Capsule()
-                        .fill(isSelected ? DoosanPalette.primary : palette.elevatedCardStrong)
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(isSelected ? DoosanPalette.primary.opacity(0.65) : palette.ghostBorder, lineWidth: 0.75)
-                )
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -217,7 +146,7 @@ private struct NotificationsStatusBannerView: View {
         HStack(spacing: 8) {
             Image(systemName: "clock.badge.exclamationmark")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(palette.secondary)
+                .foregroundStyle(palette.secondaryTint)
 
             Text(message)
                 .font(.caption.weight(.medium))

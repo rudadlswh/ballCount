@@ -24,139 +24,126 @@ struct SettingsView: View {
     ]
 
     var body: some View {
-        @Bindable var bindableAppModel = appModel
-
+        @Bindable var model = appModel
         NavigationStack {
-            Form {
-                if let palette = appModel.favoriteStadiumPalette {
-                    doosanSections(appModel: appModel, bindableAppModel: $bindableAppModel, palette: palette)
-                } else {
-                    defaultSections(appModel: appModel, bindableAppModel: $bindableAppModel)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    AppScreenHeader(title: "설정", subtitle: "응원도, 화면도 나에게 맞게")
+                    NavigationLink {
+                        FavoriteTeamSelectionView(selection: $model.settings.favoriteTeamID, fallbackPalette: .app)
+                    } label: {
+                        HStack(spacing: 12) {
+                            FavoriteTeamBadge(teamID: appModel.settings.favoriteTeamID)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("응원 팀").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                                Text(currentFavoriteTeamDisplayName(appModel: appModel)).font(.subheadline.weight(.semibold))
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.subheadline).foregroundStyle(StadiumPalette.app.textSecondary)
+                        }.cardSurface(padding: 14, cornerRadius: 18)
+                    }.buttonStyle(.plain).accessibilityIdentifier("favoriteTeamSelection")
+
+                    AppSectionTitle(title: "화면 모드")
+                    VStack(alignment: .leading, spacing: 12) {
+                        if dynamicTypeSize.isAccessibilitySize {
+                            VStack(spacing: 8) { appearanceButtons }
+                        } else {
+                            HStack(spacing: 6) { appearanceButtons }
+                        }
+                        Text("모든 응원 팀에 같은 라이트·다크 테마를 적용해요.")
+                            .font(.caption2).foregroundStyle(StadiumPalette.app.textSecondary)
+                    }.cardSurface(padding: 14)
+
+                    AppSectionTitle(title: "알림")
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            notificationSettings
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "bell").foregroundStyle(StadiumPalette.app.textSecondary)
+                                Text("경기 알림 설정")
+                                Spacer()
+                                Text(appModel.notificationAuthorizationStatus.rawValue).font(.caption).foregroundStyle(StadiumPalette.app.tint)
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                            }.frame(minHeight: 44)
+                        }.buttonStyle(.plain)
+                        Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1)
+                        HStack {
+                            Text("조용한 시간")
+                            Spacer()
+                            Text(appModel.settings.quietHours.description).font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                        }.frame(minHeight: 44)
+                    }.font(.subheadline).cardSurface(padding: 16)
+
+                    AppSectionTitle(title: "라이브 액티비티")
+                    VStack(spacing: 0) {
+                        Toggle("잠금화면에서 경기 보기", isOn: $model.settings.liveActivitiesEnabled).frame(minHeight: 44)
+                        Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1)
+                        Toggle("경기 시작 시 자동 시작", isOn: $model.settings.liveActivityAutoStartEnabled).frame(minHeight: 44)
+                    }.font(.subheadline).tint(StadiumPalette.app.primary).cardSurface(padding: 16)
+
+                    AppSectionTitle(title: "정보")
+                    VStack(spacing: 16) {
+                        InfoRow(title: "데이터 출처", value: "KBO 공식 기록")
+                        PrivacyPolicyRow(url: privacyPolicyURL)
+                        InfoRow(title: "앱 버전", value: appVersion)
+                    }.font(.subheadline).cardSurface(padding: 16)
+                }.padding(.horizontal, 22).padding(.bottom, 18)
             }
-            .navigationTitle("설정")
-            .doosanInlineNavigationTitle(isEnabled: appModel.isStadiumFavoriteSelected)
-            .stadiumNavigationChrome(appModel.favoriteStadiumPalette)
-            .notificationsToolbarButton()
-            .formStyle(.grouped)
-            .modifier(SettingsFormModifier(palette: appModel.favoriteStadiumPalette))
-            .task {
-                await appModel.refreshNotificationAuthorizationStatus()
-            }
+            .dashboardScreen()
+            .task { await appModel.refreshNotificationAuthorizationStatus() }
         }
     }
 
-    @ViewBuilder
-    private func defaultSections(appModel: AppModel, bindableAppModel: Bindable<AppModel>) -> some View {
-        Section("응원 팀") {
-            Picker("응원 팀 선택", selection: bindableAppModel.settings.favoriteTeamID) {
-                if let selectedTeamID = bindableAppModel.settings.favoriteTeamID.wrappedValue,
-                   appModel.teams.contains(where: { $0.id == selectedTeamID }) == false {
-                    Text(Team.displayName(
-                        forTeamID: selectedTeamID,
-                        fallback: TeamIdentity.catalog[selectedTeamID]?.shortLabel ?? selectedTeamID
-                    ))
-                    .tag(Optional(selectedTeamID))
-                }
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-                ForEach(appModel.teams) { team in
-                    Text(team.displayName)
-                        .tag(Optional(team.id))
-                }
-            }
-            .pickerStyle(.navigationLink)
-        }
-
-        Section("알림 설정") {
-            notificationPreferenceToggles(appModel: appModel)
-
-            LabeledContent("권한 상태", value: appModel.notificationAuthorizationStatus.rawValue)
-//            LabeledContent("기기 토큰", value: appModel.apnsDeviceToken == nil ? "없음" : "등록됨")
-
-            Button("알림 권한 요청") {
-                Task {
-                    await appModel.requestNotificationAuthorization()
-                }
-            }
-
-            LabeledContent("조용한 시간", value: bindableAppModel.settings.quietHours.wrappedValue.description)
-
-            Toggle("라이브 액티비티", isOn: bindableAppModel.settings.liveActivitiesEnabled)
-            Toggle("경기 시작 시 자동 시작", isOn: bindableAppModel.settings.liveActivityAutoStartEnabled)
-        }
-
-        Section("정보") {
-            InfoRow(title: "데이터 출처", value: "목 데이터 (실 API 연동 예정)")
-            PrivacyPolicyRow(url: privacyPolicyURL)
-            InfoRow(title: "앱 버전", value: appVersion)
-        }
-
-    }
-
-    @ViewBuilder
-    private func doosanSections(appModel: AppModel, bindableAppModel: Bindable<AppModel>, palette: StadiumPalette) -> some View {
-        Section {
-            NavigationLink {
-                DoosanFavoriteTeamSelectionView(selection: bindableAppModel.settings.favoriteTeamID, palette: palette)
+    @ViewBuilder private var appearanceButtons: some View {
+        ForEach(AppearanceOption.allCases) { option in
+            let selected = appModel.settings.appearance == option
+            Button {
+                appModel.settings.appearance = option
             } label: {
-                HStack {
-                    Text("응원 팀 선택")
-                    Spacer()
-                    Text(currentFavoriteTeamDisplayName(appModel: appModel))
-                        .foregroundStyle(palette.textSecondary)
+                VStack(spacing: 7) {
+                    AppearancePhonePreview(option: option)
+                    Text(option.rawValue).font(.caption.weight(.semibold))
+                        .foregroundStyle(selected ? StadiumPalette.app.tint : StadiumPalette.app.textPrimary)
+                    Text(option == .system ? "기기 설정" : option == .light ? "아이보리" : "네이비")
+                        .font(.caption2).foregroundStyle(StadiumPalette.app.textSecondary)
                 }
-            }
-            .settingsRowStyle(palette)
-        } header: {
-            SettingsSectionHeader(
-                title: "응원 팀",
-                subtitle: "마이팀, 일정, 알림에서 기준 팀으로 사용됩니다."
-            )
-        }
-
-        Section {
-            notificationPreferenceToggles(appModel: appModel, palette: palette)
-
-            InfoRow(title: "권한 상태", value: appModel.notificationAuthorizationStatus.rawValue)
-                .settingsRowStyle(palette)
-//            InfoRow(title: "기기 토큰", value: appModel.apnsDeviceToken == nil ? "없음" : "등록됨")
-//                .settingsRowStyle(palette)
-
-            Button("알림 권한 요청") {
-                Task {
-                    await appModel.requestNotificationAuthorization()
+                .frame(maxWidth: .infinity, minHeight: 108)
+                .background(selected ? StadiumPalette.app.tabBarSelectionSurface : StadiumPalette.app.recessedSurface,
+                            in: RoundedRectangle(cornerRadius: 14))
+                .overlay {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 14).strokeBorder(StadiumPalette.app.tint, lineWidth: 1)
+                    }
                 }
-            }
-            .settingsRowStyle(palette)
-
-            InfoRow(title: "조용한 시간", value: bindableAppModel.settings.quietHours.wrappedValue.description)
-                .settingsRowStyle(palette)
-
-            Toggle("라이브 액티비티", isOn: bindableAppModel.settings.liveActivitiesEnabled)
-                .settingsRowStyle(palette)
-            Toggle("경기 시작 시 자동 시작", isOn: bindableAppModel.settings.liveActivityAutoStartEnabled)
-                .settingsRowStyle(palette)
-        } header: {
-            SettingsSectionHeader(
-                title: "알림 설정",
-                subtitle: "실시간 이벤트 전달과 기기 권한 상태를 관리합니다."
-            )
+                .overlay(alignment: .topTrailing) {
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(StadiumPalette.app.primary)
+                            .padding(6)
+                    }
+                }
+            }.buttonStyle(.plain)
+                .accessibilityIdentifier("appearance.\(option.id)")
+                .accessibilityAddTraits(selected ? .isSelected : [])
         }
+    }
 
-        Section {
-            InfoRow(title: "데이터 출처", value: "https://www.koreabaseball.com/")
-                .settingsRowStyle(palette)
-            PrivacyPolicyRow(url: privacyPolicyURL)
-                .settingsRowStyle(palette)
-            InfoRow(title: "앱 버전", value: appVersion)
-                .settingsRowStyle(palette)
-        } header: {
-            SettingsSectionHeader(
-                title: "정보",
-                subtitle: "앱 버전과 정책 관련 정보를 확인합니다."
-            )
+    private var notificationSettings: some View {
+        Form {
+            Section("경기 알림") { notificationPreferenceToggles(appModel: appModel, palette: .app) }
+            Section("기기 권한") {
+                InfoRow(title: "권한 상태", value: appModel.notificationAuthorizationStatus.rawValue)
+                Button("알림 권한 요청") { Task { await appModel.requestNotificationAuthorization() } }
+            }.listRowBackground(StadiumPalette.app.elevatedCard)
         }
-
+        .scrollContentBackground(.hidden)
+        .background(StadiumPalette.app.background)
+        .tint(StadiumPalette.app.primary)
+        .navigationTitle("경기 알림 설정")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
     }
 
     private var appVersion: String {
@@ -217,7 +204,7 @@ struct SettingsView: View {
         guard let favoriteTeamID = appModel.settings.favoriteTeamID else {
             return "미설정"
         }
-        return appModel.teams.first(where: { $0.id == favoriteTeamID })?.displayName
+        return appModel.teams.first(where: { $0.id == favoriteTeamID })?.identity.displayName
             ?? Team.displayName(
                 forTeamID: favoriteTeamID,
                 fallback: TeamIdentity.catalog[favoriteTeamID]?.shortLabel ?? favoriteTeamID
@@ -238,10 +225,15 @@ struct SettingsView: View {
     }
 }
 
-private struct DoosanFavoriteTeamSelectionView: View {
+private struct FavoriteTeamSelectionView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var appModel
     @Binding var selection: String?
-    let palette: StadiumPalette
+    let fallbackPalette: StadiumPalette
+
+    private var palette: StadiumPalette {
+        appModel.favoriteStadiumPalette ?? fallbackPalette
+    }
 
     var body: some View {
         ScrollView {
@@ -270,7 +262,7 @@ private struct DoosanFavoriteTeamSelectionView: View {
 
                     ForEach(appModel.teams) { team in
                         teamSelectionRow(
-                            title: team.displayName,
+                            title: team.identity.displayName,
                             subtitle: team.shortName,
                             team: team,
                             value: team.id
@@ -283,18 +275,15 @@ private struct DoosanFavoriteTeamSelectionView: View {
             .padding(.vertical, 14)
         }
         .background {
-            LinearGradient(
-                colors: [palette.background, palette.sectionBackground],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            palette.background
             .ignoresSafeArea()
         }
+        .toolbar(.visible, for: .navigationBar)
         .navigationTitle("응원 팀 선택")
         .navigationBarTitleDisplayMode(.inline)
         .doosanInlineNavigationTitle(isEnabled: true)
         .stadiumNavigationChrome(palette)
-        .tint(palette.primary)
+        .tint(palette.tint)
     }
 
     private func teamSelectionRow(
@@ -307,12 +296,13 @@ private struct DoosanFavoriteTeamSelectionView: View {
 
         return Button {
             selection = value
+            dismiss()
         } label: {
             HStack(spacing: 12) {
                 if team == nil {
                     Image(systemName: "questionmark.circle.fill")
                         .font(.system(size: 24, weight: .bold))
-                        .foregroundStyle(isSelected ? palette.primary : palette.textSecondary)
+                        .foregroundStyle(isSelected ? palette.tint : palette.textSecondary)
                         .frame(width: 36, height: 36)
                 }
 
@@ -329,7 +319,7 @@ private struct DoosanFavoriteTeamSelectionView: View {
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(isSelected ? palette.primary : palette.textSecondary.opacity(0.75))
+                    .foregroundStyle(isSelected ? palette.tint : palette.textSecondary.opacity(0.75))
             }
             .padding(12)
             .background(
@@ -338,32 +328,11 @@ private struct DoosanFavoriteTeamSelectionView: View {
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isSelected ? palette.primary.opacity(0.35) : palette.ghostBorder, lineWidth: 0.75)
+                    .stroke(isSelected ? palette.tint.opacity(0.35) : palette.ghostBorder, lineWidth: 0.75)
             }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-private struct SettingsFormModifier: ViewModifier {
-    let palette: StadiumPalette?
-
-    func body(content: Content) -> some View {
-        if let palette {
-            content
-                .scrollContentBackground(.hidden)
-                .background(
-                    LinearGradient(
-                        colors: [palette.background, palette.sectionBackground],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .tint(palette.primary)
-        } else {
-            content
-        }
     }
 }
 
@@ -373,13 +342,8 @@ private struct InfoRow: View {
     let value: String
 
     var body: some View {
-        HStack {
-            Text(title)
-                .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-            Spacer()
-            Text(value)
-                .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                .multilineTextAlignment(.trailing)
+        LabeledContent(title) {
+            Text(value).foregroundStyle(StadiumPalette.app.textSecondary)
         }
     }
 }
@@ -392,6 +356,7 @@ private struct PrivacyPolicyRow: View {
         NavigationLink {
             PrivacyPolicySafariView(url: url)
                 .ignoresSafeArea()
+                .toolbar(.visible, for: .navigationBar)
                 .navigationTitle("개인정보 처리방침")
                 .navigationBarTitleDisplayMode(.inline)
         } label: {
@@ -416,30 +381,9 @@ private struct PrivacyPolicySafariView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
 
-private struct SettingsSectionHeader: View {
-    @Environment(AppModel.self) private var appModel
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        let palette = appModel.favoriteStadiumPalette
-
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(palette?.textPrimary ?? .primary)
-            Text(subtitle)
-                .font(.caption2)
-                .foregroundStyle(palette?.textSecondary ?? .secondary)
-        }
-        .textCase(nil)
-    }
-}
-
 private extension View {
     func settingsRowStyle(_ palette: StadiumPalette) -> some View {
-        listRowBackground(palette.sectionBackground)
-            .listRowSeparator(.hidden)
+        listRowBackground(palette.elevatedCard)
             .foregroundStyle(palette.textPrimary)
     }
 }
@@ -447,4 +391,22 @@ private extension View {
 #Preview {
     SettingsView()
         .environment(AppModel.previewModel())
+}
+
+private struct AppearancePhonePreview: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let option: AppearanceOption
+    private var dark: Bool { option == .dark || (option == .system && colorScheme == .dark) }
+    private func color(_ hex: UInt32) -> Color {
+        Color(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)
+    }
+    var body: some View {
+        VStack(spacing: 4) {
+            Capsule().fill(color(dark ? 0xF3F0E2 : 0x101C2D)).frame(width: 15, height: 3)
+            RoundedRectangle(cornerRadius: 4).fill(color(dark ? 0x16263A : 0xFCFAF3)).frame(height: 15)
+            RoundedRectangle(cornerRadius: 3).fill(color(0xC9273A)).frame(height: 8)
+        }.padding(5).frame(width: 39, height: 48)
+            .background(color(dark ? 0x0B1524 : 0xF3F0E2), in: RoundedRectangle(cornerRadius: 7))
+            .accessibilityHidden(true)
+    }
 }

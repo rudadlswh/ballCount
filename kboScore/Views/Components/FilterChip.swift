@@ -24,38 +24,27 @@ struct FilterChip: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(foregroundColor)
                 .padding(.horizontal, 15)
-                .padding(.vertical, appModel.isStadiumFavoriteSelected ? 10 : 9)
-                .frame(minHeight: appModel.isStadiumFavoriteSelected ? 44 : nil)
-                .background(
-                    Capsule()
-                        .fill(backgroundStyle)
-                )
+                .padding(.vertical, 10)
+                .frame(minHeight: 44)
+                .background(Capsule().fill(backgroundStyle))
+                .overlay {
+                    Capsule().strokeBorder(isSelected ? (appModel.favoriteStadiumPalette?.secondaryTint ?? accent) : .clear, lineWidth: 1.5)
+                }
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var accent: Color {
+        appModel.favoriteStadiumPalette?.tint ?? KBOLivePalette.primary
     }
 
     private var foregroundColor: Color {
-        if let palette = appModel.favoriteStadiumPalette {
-            return isSelected ? palette.textPrimary : palette.textSecondary
-        }
-        return isSelected ? .white : Color.primary.opacity(0.7)
+        isSelected ? accent : .secondary
     }
 
     private var backgroundStyle: AnyShapeStyle {
-        if let palette = appModel.favoriteStadiumPalette {
-            if isSelected {
-                return AnyShapeStyle(
-                    LinearGradient(
-                        colors: [palette.secondary.opacity(0.95), palette.primary],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            }
-            return AnyShapeStyle(palette.elevatedCardStrong)
-        }
-
-        return AnyShapeStyle(isSelected ? appModel.currentTheme.accent : Color(.secondarySystemBackground))
+        AnyShapeStyle(isSelected ? accent.opacity(0.08) : (appModel.favoriteStadiumPalette?.uniformSurface ?? Color(.tertiarySystemGroupedBackground)))
     }
 }
 

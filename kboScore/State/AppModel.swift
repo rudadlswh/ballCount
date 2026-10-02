@@ -1011,12 +1011,7 @@ final class AppModel {
     }
 
     var currentTheme: TeamTheme {
-        switch settings.teamThemeMode {
-        case .systemDefault:
-            .neutral
-        case .favoriteTeam:
-            TeamTheme.resolve(for: settings.favoriteTeamID)
-        }
+        .homeUniform(.app)
     }
 
     var favoriteTeam: Team? {

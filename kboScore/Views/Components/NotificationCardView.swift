@@ -43,7 +43,7 @@ struct NotificationCardView: View {
 
                     if !item.isRead {
                         Circle()
-                            .fill(DoosanPalette.primary)
+                            .fill(palette.tint)
                             .frame(width: 7, height: 7)
                     }
 
@@ -83,6 +83,8 @@ struct NotificationCardView: View {
                 .fill(typeTint.opacity(item.isRead ? 0.35 : 0.9))
                 .frame(width: 4)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(item.isRead ? "읽음" : "읽지 않음")
     }
 
     private var relatedTeams: [Team] {

@@ -75,26 +75,10 @@ struct ScheduleView: View {
                         viewModel: viewModel
                     )
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 22)
+                .padding(.bottom, 18)
             }
-            .background {
-                if let palette = appModel.favoriteStadiumPalette {
-                    LinearGradient(
-                        colors: [palette.background, palette.sectionBackground],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                } else {
-                    KBOLivePalette.background
-                        .ignoresSafeArea(edges: .bottom)
-                }
-            }
-            .navigationTitle("일정")
-            .navigationBarTitleDisplayMode(.inline)
-            .stadiumNavigationChrome(appModel.favoriteStadiumPalette)
-            .notificationsToolbarButton()
+            .dashboardScreen()
             .refreshable {
                 await viewModel.refreshDisplayedMonth(appModel: appModel)
             }
@@ -145,25 +129,18 @@ struct ScheduleView: View {
 // ScheduleCalendarCardView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 private struct ScheduleCalendarCardView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .caption) private var calendarDayWidth = 44.0
     @ObservedObject var viewModel: ScheduleViewModel
 
     private let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let palette = appModel.favoriteStadiumPalette {
-                DoosanScheduleFilterControl(selection: $viewModel.scheduleFilter, palette: palette)
-            } else {
-                Picker("일정 필터", selection: $viewModel.scheduleFilter) {
-                    ForEach(ScheduleFilter.allCases) { filter in
-                        Text(filter.rawValue)
-                            .tag(filter)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .tint(appModel.currentTheme.accent)
-            }
+            AppScreenHeader(title: "일정", subtitle: "우리 팀의 다음 경기를 놓치지 않도록")
+            AppSegmentedControl(selection: $viewModel.scheduleFilter, options: ScheduleFilter.allCases.map { ($0, $0.rawValue) })
 
             if isDisplayedMonthAvailable {
+                VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     monthNavigationButton(systemName: "chevron.left", targetMonth: previousAvailableMonth)
 
@@ -171,9 +148,9 @@ private struct ScheduleCalendarCardView: View {
 
                     VStack(spacing: 2) {
                         Text(appModel.calendarMonthTitle(for: viewModel.displayedMonth))
-                            .font(.headline.weight(.bold))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                        Text(monthSummaryText)
+                        Text(viewModel.scheduleFilter == .myTeam ? (appModel.favoriteTeam?.displayName ?? monthSummaryText) : monthSummaryText)
                             .font(.caption2)
                             .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
                     }
@@ -183,53 +160,15 @@ private struct ScheduleCalendarCardView: View {
                     monthNavigationButton(systemName: "chevron.right", targetMonth: nextAvailableMonth)
                 }
 
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 8) {
-                    ForEach(weekdaySymbols, id: \.self) { symbol in
-                        Text(symbol)
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                            .frame(maxWidth: .infinity)
+                if dynamicTypeSize.isAccessibilitySize {
+                    ScrollView(.horizontal) {
+                        calendarGrid.frame(width: calendarDayWidth * 7 + 36)
                     }
-
-                    ForEach(calendarDays) { day in
-                        Button {
-                            viewModel.selectDate(
-                                day.date,
-                                favoriteTeamID: appModel.settings.favoriteTeamID,
-                                attendedGameKeys: appModel.attendedGameKeys
-                            )
-                            Task {
-                                await viewModel.refreshLiveScoresIfNeeded(appModel: appModel)
-                            }
-                        } label: {
-                            VStack(spacing: 4) {
-                                Text(dayNumberText(for: day.date))
-                                    .font(.caption.weight(isSelected(day) ? .bold : .medium))
-                                    .foregroundStyle(dayNumberColor(for: day))
-
-                                dayMarker(for: day)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(dayBackground(for: day), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(dayTodayBorderColor(for: day), lineWidth: day.isToday ? (appModel.isStadiumFavoriteSelected ? 0.75 : 1) : 0)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(daySelectionBorderColor(for: day), lineWidth: isSelected(day) ? (appModel.isStadiumFavoriteSelected ? 1.4 : 2) : 0)
-                            )
-                            .overlay(alignment: .topTrailing) {
-                                if day.hasAttendedGame {
-                                    ScheduleAttendanceAppIcon(size: 12)
-                                        .padding(3)
-                                        .accessibilityHidden(true)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(dayAccessibilityLabel(for: day))
-                    }
+                    Text("달력을 좌우로 밀어 날짜를 확인하세요.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    calendarGrid
                 }
 
                 if viewModel.isLoadingDisplayedMonth {
@@ -246,13 +185,15 @@ private struct ScheduleCalendarCardView: View {
                         .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
                 }
 
-                #if DEBUG
-                if let debugSummary = viewModel.debugSummary {
-                    Text(debugSummary)
-                        .font(.caption2)
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                }
-                #endif
+
+                Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1)
+                HStack {
+                    Text("오늘 \(Calendar.current.component(.day, from: Date()))일")
+                        .foregroundStyle(StadiumPalette.app.tint)
+                    Spacer()
+                    Text("날짜를 선택해 경기 확인").foregroundStyle(StadiumPalette.app.textSecondary)
+                }.font(.caption2)
+                }.cardSurface(padding: 16, cornerRadius: 22)
 
                 switch viewModel.selectedGamesContentState {
                 case .initialLoading:
@@ -279,7 +220,7 @@ private struct ScheduleCalendarCardView: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(
-                                    appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.chipBackground,
+                                    appModel.favoriteStadiumPalette?.winDayFill ?? appModel.currentTheme.chipBackground,
                                     in: Capsule()
                                 )
                         }
@@ -320,11 +261,7 @@ private struct ScheduleCalendarCardView: View {
                 )
             }
         }
-        .cardSurface(
-            padding: 12,
-            cornerRadius: 18,
-            fillColor: appModel.favoriteStadiumPalette?.sectionBackground ?? appModel.currentTheme.scoreboardBackground
-        )
+
     }
 
     private var calendarDays: [MyTeamCalendarDay] {
@@ -362,6 +299,60 @@ private struct ScheduleCalendarCardView: View {
         return "표시할 일정이 없습니다"
     }
 
+    private var calendarGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 0) {
+            ForEach(weekdaySymbols, id: \.self) { symbol in
+                Text(symbol)
+                    .font(.caption2)
+                    .foregroundStyle(symbol == "일" ? StadiumPalette.app.tint : StadiumPalette.app.textSecondary)
+                    .frame(maxWidth: .infinity)
+            }
+
+            ForEach(calendarDays) { day in
+                Button {
+                    viewModel.selectDate(
+                        day.date,
+                        favoriteTeamID: appModel.settings.favoriteTeamID,
+                        attendedGameKeys: appModel.attendedGameKeys
+                    )
+                    Task {
+                        await viewModel.refreshLiveScoresIfNeeded(appModel: appModel)
+                    }
+                } label: {
+                    VStack(spacing: 4) {
+                        Text(dayNumberText(for: day.date))
+                            .font(.caption.weight(isSelected(day) ? .bold : .medium))
+                            .foregroundStyle(dayNumberColor(for: day))
+                            .lineLimit(1)
+                            .fixedSize()
+
+                        dayMarker(for: day)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(dayBackground(for: day), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(dayTodayBorderColor(for: day), lineWidth: day.isToday ? (appModel.isStadiumFavoriteSelected ? 0.75 : 1) : 0)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(daySelectionBorderColor(for: day), lineWidth: isSelected(day) ? (appModel.isStadiumFavoriteSelected ? 1.4 : 2) : 0)
+                    )
+                    .overlay(alignment: .topTrailing) {
+                        if day.hasAttendedGame {
+                            ScheduleAttendanceAppIcon(size: 12)
+                                .padding(3)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(dayAccessibilityLabel(for: day))
+                .accessibilityAddTraits(isSelected(day) ? .isSelected : [])
+            }
+        }
+    }
+
     private var emptyMonthMessage: String {
         if viewModel.scheduleFilter == .myTeam, appModel.settings.favoriteTeamID == nil {
             return "응원 팀을 선택하면 경기 있는 달만 일정에 표시됩니다."
@@ -387,31 +378,31 @@ private struct ScheduleCalendarCardView: View {
         } label: {
             Image(systemName: systemName)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(appModel.favoriteStadiumPalette?.secondary ?? appModel.currentTheme.accent)
-                .frame(width: 34, height: 34)
+                .foregroundStyle(appModel.favoriteStadiumPalette?.secondaryTint ?? appModel.currentTheme.accent)
+                .frame(width: 44, height: 44)
                 .background(
-                    appModel.favoriteStadiumPalette?.elevatedCardStrong ?? appModel.currentTheme.chipBackground,
+                    Color.clear,
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
                 .opacity(targetMonth == nil ? 0.4 : 1)
         }
         .buttonStyle(.plain)
         .disabled(targetMonth == nil)
+        .accessibilityLabel(systemName == "chevron.left" ? "이전 달" : "다음 달")
     }
 
     @ViewBuilder
     private func dayMarker(for day: MyTeamCalendarDay) -> some View {
         if let opponentName = opponentMarkerText(for: day) {
             Text(opponentName)
-                .font(.caption2.weight(.semibold))
+                .font(.system(size: 9))
                 .foregroundStyle(markerColor(for: day))
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
                 .allowsTightening(true)
                 .frame(maxWidth: .infinity, minHeight: 18)
         } else if viewModel.scheduleFilter == .myTeam {
-            Color.clear
-                .frame(height: 18)
+            Color.clear.frame(height: 18)
         } else {
             ZStack {
                 Circle()
@@ -476,7 +467,7 @@ private struct ScheduleCalendarCardView: View {
     // dayNumberColor 메서드는 이 타입의 주요 동작을 수행합니다.
     private func dayNumberColor(for day: MyTeamCalendarDay) -> Color {
         if isSelected(day) {
-            return appModel.favoriteStadiumPalette?.secondary ?? appModel.currentTheme.accent
+            return Color.white
         }
         if let palette = appModel.favoriteStadiumPalette {
             return day.isInDisplayedMonth ? palette.textPrimary : palette.textSecondary.opacity(0.6)
@@ -486,10 +477,7 @@ private struct ScheduleCalendarCardView: View {
 
     // markerColor 메서드는 전달된 값을 반영하고 내부 저장 상태를 갱신합니다.
     private func markerColor(for day: MyTeamCalendarDay) -> Color {
-        if let palette = appModel.favoriteStadiumPalette {
-            return day.dominantStatus?.stadiumTintColor(palette) ?? palette.primary
-        }
-        return day.dominantStatus?.tintColor ?? appModel.currentTheme.accent
+        isSelected(day) ? .white : StadiumPalette.app.textSecondary
     }
 
     // dayResultAppearance 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -519,62 +507,13 @@ private struct ScheduleCalendarCardView: View {
 
     // dayBackground 메서드는 이 타입의 주요 동작을 수행합니다.
     private func dayBackground(for day: MyTeamCalendarDay) -> Color {
-        if let palette = appModel.favoriteStadiumPalette {
-            if day.isInDisplayedMonth == false {
-                return palette.sectionBackground.opacity(0.65)
-            }
-
-            switch day.dominantStatus {
-            case .cancelled:
-                return stadiumNoGameDayBackground(for: day, palette: palette)
-            case .final:
-                switch dayResultAppearance(for: day) {
-                case .win:
-                    return KBOLivePalette.upcoming.opacity(0.30)
-                case .loss:
-                    return KBOLivePalette.live.opacity(0.26)
-                case .draw:
-                    return KBOLivePalette.final.opacity(0.28)
-                case .neutral:
-                    return palette.elevatedCard
-                }
-            case .live, .rainDelay, .upcoming, nil:
-                return day.hasGames ? palette.elevatedCard : stadiumNoGameDayBackground(for: day, palette: palette)
-            }
-        }
-
-        switch day.dominantStatus {
-        case .cancelled:
-            return defaultNoGameDayBackground
-        case .final:
-            switch dayResultAppearance(for: day) {
-            case .win:
-                return KBOLivePalette.upcoming.opacity(0.18)
-            case .loss:
-                return KBOLivePalette.live.opacity(0.18)
-            case .draw:
-                return KBOLivePalette.final.opacity(0.18)
-            case .neutral:
-                return appModel.currentTheme.chipBackground
-            }
-        case .live, .rainDelay, .upcoming, nil:
-            return defaultNoGameDayBackground
-        }
-    }
-
-    // stadiumNoGameDayBackground 메서드는 이 타입의 주요 동작을 수행합니다.
-    private func stadiumNoGameDayBackground(for day: MyTeamCalendarDay, palette: StadiumPalette) -> Color {
-        isSelected(day) ? palette.elevatedCardStrong : palette.recessedSurface
-    }
-
-    private var defaultNoGameDayBackground: Color {
-        .clear
+        isSelected(day) ? StadiumPalette.app.primary : .clear
     }
 
     // dayTodayBorderColor 메서드는 이 타입의 주요 동작을 수행합니다.
     private func dayTodayBorderColor(for day: MyTeamCalendarDay) -> Color {
         if let palette = appModel.favoriteStadiumPalette {
-            return day.isToday ? palette.secondary.opacity(0.85) : .clear
+            return day.isToday ? palette.secondaryTint.opacity(0.85) : .clear
         }
         return day.isToday ? KBOLivePalette.upcoming.opacity(0.9) : .clear
     }
@@ -582,7 +521,7 @@ private struct ScheduleCalendarCardView: View {
     // daySelectionBorderColor 메서드는 이 타입의 주요 동작을 수행합니다.
     private func daySelectionBorderColor(for day: MyTeamCalendarDay) -> Color {
         if let palette = appModel.favoriteStadiumPalette {
-            return isSelected(day) ? palette.primary : .clear
+            return isSelected(day) ? palette.tint : .clear
         }
         return isSelected(day) ? appModel.currentTheme.accent : .clear
     }
@@ -622,40 +561,6 @@ private struct ScheduleLoadingPlaceholderView: View {
 }
 
 // DoosanScheduleFilterControl 구조체는 DoosanScheduleFilterControl 타입의 역할과 값을 정의합니다.
-private struct DoosanScheduleFilterControl: View {
-    @Binding var selection: ScheduleFilter
-    let palette: StadiumPalette
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(ScheduleFilter.allCases) { filter in
-                Button {
-                    selection = filter
-                } label: {
-                    Text(filter.rawValue)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(selection == filter ? Color.white : palette.textSecondary)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(selection == filter ? palette.primary : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selection == filter ? .isSelected : [])
-            }
-        }
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(palette.recessedSurface)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(palette.ghostBorder, lineWidth: 0.75)
-        }
-    }
-}
 
 // ScheduleGameRow 구조체는 ScheduleGameRow 타입의 역할과 값을 정의합니다.
 private struct ScheduleGameRow: View {
@@ -666,155 +571,40 @@ private struct ScheduleGameRow: View {
     let onAttendanceToggle: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(titleText)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Text(homeAwayLabel)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? appModel.currentTheme.accent)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.chipBackground,
-                            in: Capsule()
-                        )
-
+        VStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Text(homeAwayLabel).font(.caption2.weight(.semibold))
+                            .foregroundStyle(StadiumPalette.app.tint)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(StadiumPalette.app.tabBarSelectionSurface, in: Capsule())
+                        Text(titleText).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.75)
+                    }
+                    Text("\(KBOInningFormatter.korean(game.inningText) ?? game.scheduledStart.formatted(date: .omitted, time: .shortened)) · \(game.venue)")
+                        .font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
                     if appModel.isGameAttended(game) {
-                        ScheduleAttendanceBadge()
+                        Button(action: onAttendanceToggle) { Label("직관 해제", systemImage: "checkmark.circle.fill") }
+                            .font(.caption).buttonStyle(.plain).frame(minHeight: 44)
                     }
                 }
-
-                Text(subtitleText)
-                    .font(.caption)
-                    .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-
-                if let liveScoreText {
-                    Text(liveScoreText)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? appModel.currentTheme.accent)
-                }
-
-                if let finalResultText {
-                    Text(finalResultText)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                }
-                if let cancelledText {
-                    Text(cancelledText)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .secondary)
-                }
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(game.scheduledStart.formatted(date: .omitted, time: .shortened))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .primary)
-                Text(statusBadgeText)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(statusBadgeTint)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(
-                            statusBadgeTint.opacity(appModel.isStadiumFavoriteSelected ? 0.26 : 0.10),
-                        in: Capsule()
-                    )
-
-                if appModel.isGameAttended(game) {
-                    Button(action: onAttendanceToggle) {
-//                        ScheduleAttendanceAppIcon(size: 22)
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 4) {
+                    StatusBadge(status: game.status)
+                    if game.status.isLiveLike || game.status == .final {
+                        Text("\(game.awayScore.map(String.init) ?? "–") : \(game.homeScore.map(String.init) ?? "–")")
+                            .font(.title2.weight(.bold)).monospacedDigit().foregroundStyle(StadiumPalette.app.tint)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("직관 해제")
                 }
             }
-        }
-        .padding(10)
-        .background(
-            appModel.favoriteStadiumPalette?.elevatedCard ?? Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-    }
-
-    private var leadingTeam: Team {
-        if filter == .myTeam, let favoriteTeamID {
-            if game.awayTeam.id == favoriteTeamID {
-                return game.homeTeam
-            }
-            if game.homeTeam.id == favoriteTeamID {
-                return game.awayTeam
-            }
-        }
-        return game.awayTeam
+            Text("경기 상세 보기").font(.subheadline.weight(.medium))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(StadiumPalette.app.recessedSurface, in: RoundedRectangle(cornerRadius: 14))
+        }.cardSurface(padding: 16, cornerRadius: 20)
     }
 
     private var titleText: String {
-        if filter == .myTeam, favoriteTeamID != nil {
-            return leadingTeam.displayName
-        }
-        return "\(game.awayTeam.displayName) vs \(game.homeTeam.displayName)"
-    }
-
-    private var subtitleText: String {
-        if filter == .myTeam, favoriteTeamID != nil {
-            return game.venue
-        }
-        return "\(game.venue) · \(game.homeTeam.displayName) 홈"
-    }
-
-    private var finalResultText: String? {
-        guard filter == .all,
-              game.status == .final,
-              let winningTeam = game.finalWinningTeam,
-              let scoreLine = game.finalScoreLine else {
-            return nil
-        }
-        return "\(winningTeam.displayName) 승 · \(scoreLine)"
-    }
-    
-    private var isCancelledGame: Bool {
-        game.status == .cancelled
-    }
-
-    private var cancelledText: String? {
-        guard filter == .all, isCancelledGame else { return nil }
-        return "경기 취소"
-    }
-    
-    private var statusBadgeText: String {
-        if isCancelledGame {
-            return "취소"
-        }
-        return game.status.title
-    }
-
-    private var statusBadgeTint: Color {
-        if isCancelledGame {
-            return appModel.favoriteStadiumPalette?.textSecondary ?? .secondary
-        }
-        return appModel.favoriteStadiumPalette.map {
-            game.status.stadiumTintColor($0)
-        } ?? game.status.tintColor
-    }
-
-    private var liveScoreText: String? {
-        guard game.status.isLiveLike else { return nil }
-        guard let awayScore = game.awayScore,
-              let homeScore = game.homeScore else {
-            return nil
-        }
-        let scoreText = "\(game.awayTeam.displayName) \(awayScore) : \(homeScore) \(game.homeTeam.displayName)"
-        guard let inningText = KBOInningFormatter.korean(game.inningText) ?? game.inningText else {
-            return scoreText
-        }
-        return "\(inningText) · \(scoreText)"
+        "\(game.awayTeam.identity.shortLabel) vs \(game.homeTeam.identity.shortLabel)"
     }
 
     private var homeAwayLabel: String {
