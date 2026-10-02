@@ -341,19 +341,29 @@ enum FavoriteTeamLiveActivitySupport {
 #if canImport(ActivityKit)
 @MainActor
 final class FavoriteTeamLiveActivityManager: FavoriteTeamLiveActivityControlling {
-    let isSupported: Bool
+    var isSupported: Bool { FavoriteTeamLiveActivitySupport.isSupported }
 
     private var activity: Activity<FavoriteTeamGameActivityAttributes>?
     private(set) var activeGameID: UUID?
     private var updateDeduper = FavoriteTeamLiveActivityUpdateDeduper()
     private let tokenRegistrationClient: any LiveActivityTokenRegistrationClient
-    private var pushTokenObservationTask: Task<Void, Never>?
+    private var activityObservationTask: Task<Void, Never>?
+    private var pushTokenObservationTasks: [String: Task<Void, Never>] = [:]
+    private var inFlightTokenKeys: Set<LiveActivityTokenRegistrationKey> = []
     private var registeredTokenKeys: Set<LiveActivityTokenRegistrationKey> = []
 
     // 이 초기화 메서드는 인스턴스 생성에 필요한 값을 설정합니다.
     init(tokenRegistrationClient: (any LiveActivityTokenRegistrationClient)? = nil) {
-        self.isSupported = FavoriteTeamLiveActivitySupport.isSupported
         self.tokenRegistrationClient = tokenRegistrationClient ?? LiveActivityTokenRegistrationClientFactory.makeAppClient()
+        // 시스템이 앱을 백그라운드에서 깨운 경우에도 원격 생성 Activity를 즉시 관찰합니다.
+        activityObservationTask = Task { [weak self] in
+            for await activity in Activity<FavoriteTeamGameActivityAttributes>.activityUpdates {
+                self?.observePushTokens(for: activity)
+            }
+        }
+        for activity in Activity<FavoriteTeamGameActivityAttributes>.activities {
+            observePushTokens(for: activity)
+        }
     }
 
     // startOrUpdate 메서드는 비동기 작업이나 시스템 연동 흐름을 제어합니다.
@@ -403,6 +413,7 @@ final class FavoriteTeamLiveActivityManager: FavoriteTeamLiveActivityControlling
             AppLog.info(.liveActivity, "[LiveActivity] update completed activityID=\(activity.id) gameID=\(snapshot.gameID.uuidString) phase=\(snapshot.isPreGame ? "preGame" : "active")")
         } else {
             if let activity {
+                pushTokenObservationTasks.removeValue(forKey: activity.id)?.cancel()
                 AppLog.info(.liveActivity, "[LiveActivity] end requested reason=replaceExisting activityID=\(activity.id) gameID=\(snapshot.gameID.uuidString)")
                 await activity.end(nil, dismissalPolicy: .immediate)
             }
@@ -428,60 +439,66 @@ final class FavoriteTeamLiveActivityManager: FavoriteTeamLiveActivityControlling
         self.activity = nil
         activeGameID = nil
         updateDeduper.reset()
-        pushTokenObservationTask?.cancel()
-        pushTokenObservationTask = nil
+        pushTokenObservationTasks.removeValue(forKey: activity.id)?.cancel()
         AppLog.info(.liveActivity, "[LiveActivity] end completed")
     }
 
     // observePushTokens 메서드는 이 타입의 주요 동작을 수행합니다.
-    private func observePushTokens(for activity: Activity<FavoriteTeamGameActivityAttributes>, snapshot: FavoriteTeamLiveActivitySnapshot) {
-        pushTokenObservationTask?.cancel()
-        pushTokenObservationTask = Task { [tokenRegistrationClient] in
-            for await tokenData in activity.pushTokenUpdates {
-                let token = tokenData.map { String(format: "%02x", $0) }.joined()
-                let payload = LiveActivityTokenRegistrationPayload(
-                    activityId: activity.id,
-                    activityToken: token,
-                    favoriteTeamID: snapshot.favoriteTeamID,
-                    publicGameID: snapshot.publicGameID,
-                    providerGameID: snapshot.providerGameID,
-                    databaseID: snapshot.databaseID,
-                    stableDetailIdentity: snapshot.stableDetailIdentity
-                )
-                #if DEBUG
-                print("[LiveActivity] push token received hasActivityId=\(activity.id.isEmpty == false) environment=\(payload.environment) buildConfiguration=\(AppBuildConfiguration.current) hasPublicGameID=\(payload.publicGameID?.isEmpty == false) hasProviderGameID=\(payload.providerGameID?.isEmpty == false) hasDatabaseID=\(payload.databaseID.isEmpty == false)")
-                #else
-                print("[LiveActivity] push token received reason=tokenUpdate environment=\(payload.environment) buildConfiguration=\(AppBuildConfiguration.current)")
-                #endif
-                AppLog.info(.liveActivity, "[LiveActivity] push token received environment=\(payload.environment) buildConfiguration=\(AppBuildConfiguration.current) hasActivityId=\(activity.id.isEmpty == false) hasPublicGameID=\(payload.publicGameID?.isEmpty == false) hasProviderGameID=\(payload.providerGameID?.isEmpty == false)")
-                let key = LiveActivityTokenRegistrationKey(payload: payload, endpointDescription: tokenRegistrationClient.debugEndpointDescription)
-                await MainActor.run {
-                    guard self.registeredTokenKeys.insert(key).inserted else {
-                        #if DEBUG
-                        print("[LiveActivity] token registration skipped duplicate \(key)")
-                        #endif
-                        AppLog.info(.liveActivity, "[LiveActivity] token registration skipped duplicate")
-                        return
-                    }
-                }
-                do {
-                    _ = try await tokenRegistrationClient.register(payload)
-                    #if DEBUG
-                    print("[LiveActivity] token registration success environment=\(payload.environment) hasActivityId=\(activity.id.isEmpty == false) hasPublicGameID=\(payload.publicGameID?.isEmpty == false) hasProviderGameID=\(payload.providerGameID?.isEmpty == false) hasDatabaseID=\(payload.databaseID.isEmpty == false) hasStableDetailIdentity=\(payload.stableDetailIdentity.isEmpty == false) retry=false")
-                    #else
-                    print("[LiveActivity] token registration success reason=activityTokenRegistration environment=\(payload.environment) retry=false")
-                    #endif
-                    AppLog.info(.liveActivity, "[LiveActivity] token registration success environment=\(payload.environment) hasActivityId=\(activity.id.isEmpty == false) hasPublicGameID=\(payload.publicGameID?.isEmpty == false) hasProviderGameID=\(payload.providerGameID?.isEmpty == false) retry=false")
-                } catch {
-                    #if DEBUG
-                    print("[LiveActivity] token registration failure environment=\(payload.environment) hasActivityId=\(activity.id.isEmpty == false) hasPublicGameID=\(payload.publicGameID?.isEmpty == false) hasProviderGameID=\(payload.providerGameID?.isEmpty == false) endpoint=\(tokenRegistrationClient.debugEndpointDescription ?? "missing") retry=false error=\(error)")
-                    #else
-                    print("[LiveActivity] token registration failure reason=activityTokenRegistration environment=\(payload.environment) retry=false")
-                    #endif
-                    AppLog.error(.liveActivity, "[LiveActivity] token registration failure environment=\(payload.environment) hasActivityId=\(activity.id.isEmpty == false) hasPublicGameID=\(payload.publicGameID?.isEmpty == false) hasProviderGameID=\(payload.providerGameID?.isEmpty == false) retry=false error=\(error)")
-                }
+    private func observePushTokens(
+        for activity: Activity<FavoriteTeamGameActivityAttributes>,
+        snapshot: FavoriteTeamLiveActivitySnapshot? = nil
+    ) {
+        guard activity.activityState == .active || activity.activityState == .stale else { return }
+        if snapshot == nil && self.activity == nil {
+            self.activity = activity
+            activeGameID = UUID(uuidString: activity.attributes.gameID)
+        }
+        if pushTokenObservationTasks[activity.id] != nil && snapshot == nil { return }
+        pushTokenObservationTasks.removeValue(forKey: activity.id)?.cancel()
+        pushTokenObservationTasks[activity.id] = Task { [weak self] in
+            if let token = activity.pushToken {
+                await self?.registerPushToken(token, for: activity, snapshot: snapshot)
+            }
+            for await token in activity.pushTokenUpdates {
+                await self?.registerPushToken(token, for: activity, snapshot: snapshot)
             }
         }
     }
+
+    private func registerPushToken(
+        _ tokenData: Data,
+        for activity: Activity<FavoriteTeamGameActivityAttributes>,
+        snapshot: FavoriteTeamLiveActivitySnapshot?
+    ) async {
+        let token = tokenData.map { String(format: "%02x", $0) }.joined()
+        let payload: LiveActivityTokenRegistrationPayload
+        if let snapshot {
+            payload = LiveActivityTokenRegistrationPayload(
+                activityId: activity.id, activityToken: token,
+                favoriteTeamID: snapshot.favoriteTeamID,
+                publicGameID: snapshot.publicGameID, providerGameID: snapshot.providerGameID,
+                databaseID: snapshot.databaseID, stableDetailIdentity: snapshot.stableDetailIdentity
+            )
+        } else if let remotePayload = LiveActivityTokenRegistrationPayload(
+            activityId: activity.id, activityToken: token, attributes: activity.attributes
+        ) {
+            payload = remotePayload
+        } else {
+            AppLog.error(.liveActivity, "[LiveActivity] remote token registration skipped reason=invalidGameID")
+            return
+        }
+        let key = LiveActivityTokenRegistrationKey(payload: payload, endpointDescription: tokenRegistrationClient.debugEndpointDescription)
+        guard !registeredTokenKeys.contains(key), inFlightTokenKeys.insert(key).inserted else { return }
+        defer { inFlightTokenKeys.remove(key) }
+        do {
+            let client = tokenRegistrationClient
+            let status = try await withLiveActivityRegistrationRetry { try await client.register(payload) }
+            if case .synced = status { registeredTokenKeys.insert(key) }
+            AppLog.info(.liveActivity, "[LiveActivity] update token registration completed environment=\(payload.environment) source=\(snapshot == nil ? "remoteStart" : "localStart")")
+        } catch {
+            AppLog.error(.liveActivity, "[LiveActivity] update token registration failure environment=\(payload.environment) error=\(error)")
+        }
+    }
+
 }
 #endif

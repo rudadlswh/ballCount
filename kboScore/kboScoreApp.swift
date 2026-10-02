@@ -94,6 +94,8 @@ struct kboScoreApp: App {
     init() {
         let appModel = Self.makeAppModel()
         _appModel = State(initialValue: appModel)
+        // ActivityKit의 백그라운드 시작에서도 화면 생성 전에 토큰 관찰을 연결합니다.
+        appModel.startLiveActivityPushToStartTokenObservation()
         LiveActivityBackgroundRefreshScheduler.register {
             await appModel.refreshTodayForBackgroundLiveActivity(reason: "backgroundTask")
         }
@@ -131,6 +133,7 @@ struct kboScoreApp: App {
                     switch newPhase {
                     case .active:
                         Task {
+                            await appModel.syncNotificationRegistrationState()
                             await appModel.resumeLiveGameDetailPollingIfNeeded()
                             await appModel.refreshTodayOnForeground()
                         }

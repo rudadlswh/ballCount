@@ -67,6 +67,20 @@ nonisolated struct LiveActivityTokenRegistrationPayload: Codable, Equatable, Sen
     }
 }
 
+#if canImport(ActivityKit)
+extension LiveActivityTokenRegistrationPayload {
+    // 원격 시작 속성에 서버 경기 UUID가 있어, 경기 데이터를 다시 조회하지 않아도 등록할 수 있습니다.
+    nonisolated init?(activityId: String, activityToken: String, attributes: FavoriteTeamGameActivityAttributes) {
+        guard let gameID = UUID(uuidString: attributes.gameID) else { return nil }
+        let databaseID = gameID.uuidString.lowercased()
+        self.init(activityId: activityId, activityToken: activityToken,
+                  favoriteTeamID: attributes.favoriteTeamID,
+                  publicGameID: nil, providerGameID: nil,
+                  databaseID: databaseID, stableDetailIdentity: "database:" + databaseID)
+    }
+}
+#endif
+
 nonisolated struct LiveActivityPushToStartTokenRegistrationPayload: Codable, Equatable, Sendable {
     let platform: String
     let environment: String
@@ -134,7 +148,7 @@ nonisolated struct LiveActivityPushToStartTokenRegistrationPayload: Codable, Equ
 }
 
 nonisolated struct LiveActivityPushToStartTokenRegistrationKey: Hashable, Sendable, CustomStringConvertible {
-    let tokenPrefix: String
+    private let token: String
     let environment: String
     let installationId: String
     let favoriteTeamID: String?
@@ -146,7 +160,7 @@ nonisolated struct LiveActivityPushToStartTokenRegistrationKey: Hashable, Sendab
     let endpointDescription: String?
 
     nonisolated init(payload: LiveActivityPushToStartTokenRegistrationPayload, endpointDescription: String?) {
-        self.tokenPrefix = String(payload.pushToStartToken.prefix(8))
+        self.token = payload.pushToStartToken
         self.environment = payload.environment
         self.installationId = payload.installationId
         self.favoriteTeamID = payload.favoriteTeamID
@@ -175,7 +189,7 @@ nonisolated struct LiveActivityPushToStartTokenRegistrationKey: Hashable, Sendab
 // LiveActivityTokenRegistrationKey 구조체는 LiveActivityTokenRegistrationKey 타입의 역할과 값을 정의합니다.
 nonisolated struct LiveActivityTokenRegistrationKey: Hashable, Sendable, CustomStringConvertible {
     let activityId: String
-    let tokenPrefix: String
+    private let token: String
     let environment: String
     let publicGameID: String?
     let providerGameID: String?
@@ -186,7 +200,7 @@ nonisolated struct LiveActivityTokenRegistrationKey: Hashable, Sendable, CustomS
     // 이 초기화 메서드는 인스턴스 생성에 필요한 값을 설정합니다.
     nonisolated init(payload: LiveActivityTokenRegistrationPayload, endpointDescription: String?) {
         self.activityId = payload.activityId
-        self.tokenPrefix = String(payload.activityToken.prefix(8))
+        self.token = payload.activityToken
         self.environment = payload.environment
         self.publicGameID = payload.publicGameID
         self.providerGameID = payload.providerGameID
@@ -419,5 +433,67 @@ struct RemoteLiveActivityPushToStartTokenRegistrationClient: LiveActivityPushToS
         print("[LiveActivity] push-to-start registration response success endpoint=\(endpointURL.absoluteString) environment=\(payload.environment) hasFavoriteTeamID=\(payload.favoriteTeamID?.isEmpty == false) status=\(httpResponse.statusCode) retry=false")
         #endif
         return .synced
+    }
+}
+
+// 일시적인 통신 실패는 짧게 재시도하고, 인증·요청 오류는 그대로 반환합니다.
+nonisolated func withLiveActivityRegistrationRetry<T: Sendable>(
+    _ operation: @Sendable () async throws -> T
+) async throws -> T {
+    for attempt in 0..<3 {
+        do { return try await operation() }
+        catch {
+            let retryable: Bool
+            if let urlError = error as? URLError {
+                retryable = [.timedOut, .networkConnectionLost, .notConnectedToInternet,
+                             .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(urlError.code)
+            } else if case RemoteNotificationRegistrationClientError.unexpectedStatusCode(let status) = error {
+                retryable = status == 429 || (500..<600).contains(status)
+            } else {
+                retryable = false
+            }
+            guard retryable, attempt < 2, !Task.isCancelled else { throw error }
+            try await Task.sleep(for: .seconds(attempt + 1))
+        }
+    }
+    preconditionFailure("Registration retry loop must return or throw")
+}
+
+// 설정이 등록 도중 바뀌어도 가장 최근 값을 순서대로 서버에 반영합니다.
+@MainActor
+final class LiveActivityPushToStartTokenRegistrar {
+    private let client: any LiveActivityPushToStartTokenRegistrationClient
+    private var lastSuccessfulPayload: LiveActivityPushToStartTokenRegistrationPayload?
+    private var pending: (payload: LiveActivityPushToStartTokenRegistrationPayload, reason: String)?
+    private var registrationTask: Task<Void, Never>?
+
+    init(client: any LiveActivityPushToStartTokenRegistrationClient) { self.client = client }
+
+    func register(_ payload: LiveActivityPushToStartTokenRegistrationPayload, reason: String) async {
+        pending = (payload, reason)
+        if let registrationTask {
+            await registrationTask.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            while let next = pending {
+                pending = nil
+                guard next.payload != lastSuccessfulPayload else { continue }
+                do {
+                    let client = self.client
+                    let status = try await withLiveActivityRegistrationRetry { try await client.register(next.payload) }
+                    if case .synced = status {
+                        lastSuccessfulPayload = next.payload
+                        AppLog.info(.liveActivity, "[LiveActivity] push-to-start registration success reason=\(next.reason) environment=\(next.payload.environment) autoStart=\(next.payload.liveActivityAutoStartEnabled)")
+                    }
+                } catch {
+                    AppLog.error(.liveActivity, "[LiveActivity] push-to-start registration failure reason=\(next.reason) error=\(error)")
+                }
+            }
+            registrationTask = nil
+        }
+        registrationTask = task
+        await task.value
     }
 }

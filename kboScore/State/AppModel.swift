@@ -176,7 +176,6 @@ final class AppModel {
     private let repository: any KBORepository
     private let repositoryRuntimeState: RepositoryRuntimeState?
     private let notificationRegistrationClient: any NotificationRegistrationClient
-    private let liveActivityPushToStartTokenRegistrationClient: any LiveActivityPushToStartTokenRegistrationClient
     private let scheduleStaleGameReconciliationClient: any ScheduleStaleGameReconciliationClient
     private let attendanceClient: any AttendanceClient
     private let gameLiveStateClient: any GameLiveStateFetching
@@ -200,7 +199,7 @@ final class AppModel {
     private var notificationRegistrationSyncTaskKey: NotificationRegistrationKey?
     private var notificationRegistrationSyncGeneration = 0
     private var liveActivityPushToStartTokenObservationTask: Task<Void, Never>?
-    private var registeredPushToStartTokenKeys: Set<LiveActivityPushToStartTokenRegistrationKey> = []
+    private let liveActivityPushToStartTokenRegistrar: LiveActivityPushToStartTokenRegistrar
     private var lastLiveActivityPushToStartToken: String?
     private var lastNotifiedGameStates: [String: GameContentNotificationState] = [:]
     private var lastFavoriteTeamWidgetSemanticKey: String?
@@ -263,9 +262,16 @@ final class AppModel {
             }
             if oldValue.liveActivitiesEnabled != settings.liveActivitiesEnabled ||
                 oldValue.liveActivityAutoStartEnabled != settings.liveActivityAutoStartEnabled ||
-                oldValue.favoriteTeamID != settings.favoriteTeamID {
+                oldValue.favoriteTeamID != settings.favoriteTeamID ||
+                oldValue.notificationPreferences != settings.notificationPreferences {
                 Task { [weak self] in
                     await self?.registerLastKnownPushToStartTokenIfNeeded(reason: "settingsChanged")
+                }
+            }
+            if oldValue.liveActivitiesEnabled != settings.liveActivitiesEnabled ||
+                oldValue.liveActivityAutoStartEnabled != settings.liveActivityAutoStartEnabled ||
+                favoriteTeamChanged {
+                Task { [weak self] in
                     await self?.syncFavoriteTeamLiveActivity()
                     await self?.syncFavoriteTeamWidgetSnapshot(
                         includePrefetch: true,
@@ -342,7 +348,7 @@ final class AppModel {
         self.repository = repository
         self.repositoryRuntimeState = repositoryRuntimeState
         self.notificationRegistrationClient = notificationRegistrationClient
-        self.liveActivityPushToStartTokenRegistrationClient = liveActivityPushToStartTokenRegistrationClient
+        self.liveActivityPushToStartTokenRegistrar = LiveActivityPushToStartTokenRegistrar(client: liveActivityPushToStartTokenRegistrationClient)
         self.scheduleStaleGameReconciliationClient = scheduleStaleGameReconciliationClient
         self.attendanceClient = attendanceClient
         self.gameLiveStateClient = gameLiveStateClient
@@ -3885,6 +3891,10 @@ final class AppModel {
         print("[NotificationPipeline] authorizationStatus=\(notificationAuthorizationStatus.rawValue)")
         #endif
         scheduleNotificationRegistrationSync(force: false)
+        startLiveActivityPushToStartTokenObservation()
+        Task { [weak self] in
+            await self?.registerLastKnownPushToStartTokenIfNeeded(reason: "authorizationRefreshed")
+        }
     }
 
     // syncNotificationRegistrationState 메서드는 최신 상태를 다시 가져오고 관련 화면 데이터를 동기화합니다.
@@ -5451,6 +5461,10 @@ final class AppModel {
         }
         liveActivityPushToStartTokenObservationTask = Task { [weak self] in
             if #available(iOS 17.2, *) {
+                if let tokenData = Activity<FavoriteTeamGameActivityAttributes>.pushToStartToken {
+                    self?.lastLiveActivityPushToStartToken = tokenData.map { String(format: "%02x", $0) }.joined()
+                }
+                await self?.refreshNotificationAuthorizationStatus()
                 for await tokenData in Activity<FavoriteTeamGameActivityAttributes>.pushToStartTokenUpdates {
                     let token = tokenData.map { String(format: "%02x", $0) }.joined()
                     await self?.registerPushToStartToken(token, reason: "tokenUpdate")
@@ -5483,40 +5497,7 @@ final class AppModel {
             settings: settings,
             authorizationStatus: notificationAuthorizationStatus
         )
-        let key = LiveActivityPushToStartTokenRegistrationKey(
-            payload: payload,
-            endpointDescription: liveActivityPushToStartTokenRegistrationClient.debugEndpointDescription
-        )
-        guard registeredPushToStartTokenKeys.insert(key).inserted else {
-            #if DEBUG
-            print("[LiveActivity] push-to-start registration skipped duplicate reason=\(reason) \(key)")
-            #endif
-            AppLog.info(.liveActivity, "[LiveActivity] push-to-start registration skipped duplicate reason=\(reason)")
-            return
-        }
-
-        #if DEBUG
-        print("[LiveActivity] push-to-start token received reason=\(reason) environment=\(payload.environment) autoStart=\(payload.liveActivityAutoStartEnabled) hasFavoriteTeamID=\(payload.favoriteTeamID?.isEmpty == false) retry=false")
-        #else
-        print("[LiveActivity] push-to-start token received reason=\(reason) environment=\(payload.environment)")
-        #endif
-        AppLog.info(.liveActivity, "[LiveActivity] push-to-start token received reason=\(reason) environment=\(payload.environment) autoStart=\(payload.liveActivityAutoStartEnabled) hasFavoriteTeamID=\(payload.favoriteTeamID?.isEmpty == false) retry=false")
-        do {
-            _ = try await liveActivityPushToStartTokenRegistrationClient.register(payload)
-            #if DEBUG
-            print("[LiveActivity] push-to-start registration success reason=\(reason) environment=\(payload.environment) hasFavoriteTeamID=\(payload.favoriteTeamID?.isEmpty == false) retry=false")
-            #else
-            print("[LiveActivity] push-to-start registration success reason=\(reason) environment=\(payload.environment) retry=false")
-            #endif
-            AppLog.info(.liveActivity, "[LiveActivity] push-to-start registration success reason=\(reason) environment=\(payload.environment) hasFavoriteTeamID=\(payload.favoriteTeamID?.isEmpty == false) retry=false")
-        } catch {
-            #if DEBUG
-            print("[LiveActivity] push-to-start registration failure reason=\(reason) endpoint=\(liveActivityPushToStartTokenRegistrationClient.debugEndpointDescription ?? "missing") hasFavoriteTeamID=\(payload.favoriteTeamID?.isEmpty == false) retry=false error=\(error)")
-            #else
-            print("[LiveActivity] push-to-start registration failure reason=\(reason) retry=false")
-            #endif
-            AppLog.error(.liveActivity, "[LiveActivity] push-to-start registration failure reason=\(reason) hasFavoriteTeamID=\(payload.favoriteTeamID?.isEmpty == false) retry=false error=\(error)")
-        }
+        await liveActivityPushToStartTokenRegistrar.register(payload, reason: reason)
     }
 
     // scheduleNotificationRegistrationSyncIfNeeded 메서드는 비동기 작업이나 시스템 연동 흐름을 제어합니다.
