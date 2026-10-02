@@ -27,7 +27,8 @@ struct KBOScoreLiveActivityWidget: Widget {
                         side: game.away,
                         alignment: .leading,
                         isBatting: game.battingSide == .away,
-                        showsScore: game.isPreGame == false
+                        showsScore: game.isPreGame == false,
+                        isFavorite: game.away.teamID == game.favoriteTeamID
                     )
                 }
 
@@ -36,15 +37,15 @@ struct KBOScoreLiveActivityWidget: Widget {
                         side: game.home,
                         alignment: .trailing,
                         isBatting: game.battingSide == .home,
-                        showsScore: game.isPreGame == false
+                        showsScore: game.isPreGame == false,
+                        isFavorite: game.home.teamID == game.favoriteTeamID
                     )
                 }
 
                 DynamicIslandExpandedRegion(.center) {
                     DynamicIslandStatusView(
                         inningText: game.inningText,
-                        statusText: game.statusText,
-                        baseState: game.baseState
+                        statusText: game.statusText
                     )
                 }
 
@@ -52,26 +53,15 @@ struct KBOScoreLiveActivityWidget: Widget {
                     DynamicIslandBroadcastMetadataRow(game: game)
                 }
             } compactLeading: {
-                Text(game.isPreGame ? game.away.shortName : "\(game.away.shortName) \(game.away.scoreText)")
-                    .font(.caption2.weight(.bold))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                    .foregroundStyle(.white)
+                DynamicIslandCompactTeamView(side: game.away, alignment: .leading,
+                                             showsScore: !game.isPreGame, isFavorite: game.away.teamID == game.favoriteTeamID)
             } compactTrailing: {
-                Text(game.isPreGame ? game.home.shortName : "\(game.home.scoreText) \(game.home.shortName)")
-                    .font(.caption2.weight(.bold))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                    .foregroundStyle(.white)
+                DynamicIslandCompactTeamView(side: game.home, alignment: .trailing,
+                                             showsScore: !game.isPreGame, isFavorite: game.home.teamID == game.favoriteTeamID)
             } minimal: {
-                Text(game.minimalStatusText)
-                    .font(.caption2.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                DynamicIslandMinimalView(game: game)
             }
-            .keylineTint(game.favoriteAccent)
+            .keylineTint(dynamicIslandAccent)
         }
     }
 }
@@ -105,7 +95,7 @@ private struct BroadcastScoreboardGame {
     let balls: Int?
     let strikes: Int?
     let outs: Int?
-    let favoriteAccent: Color
+    let favoriteTeamID: String
 
     // 이 초기화 메서드는 인스턴스 생성에 필요한 값을 설정합니다.
     init(context: ActivityViewContext<FavoriteTeamGameActivityAttributes>) {
@@ -144,21 +134,14 @@ private struct BroadcastScoreboardGame {
             venue: context.attributes.venue
         )
         baseState = context.state.isPreGame ? nil : Self.baseState(
-            first: context.state.runnerOnFirst ?? false,
-            second: context.state.runnerOnSecond ?? false,
-            third: context.state.runnerOnThird ?? false
+            first: context.state.runnerOnFirst,
+            second: context.state.runnerOnSecond,
+            third: context.state.runnerOnThird
         )
         balls = context.state.isPreGame ? nil : context.state.balls
         strikes = context.state.isPreGame ? nil : context.state.strikes
         outs = context.state.isPreGame ? nil : context.state.outs
-        favoriteAccent = favorite.accent
-    }
-
-    var minimalStatusText: String {
-        if statusText == "LIVE" {
-            return "LIVE"
-        }
-        return statusText
+        favoriteTeamID = context.attributes.favoriteTeamID
     }
 
     // metadataText 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -649,86 +632,126 @@ private extension String {
     }
 }
 
-// DynamicIslandTeamView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
+// Dynamic Island는 화면 모드와 관계없이 시스템의 검정 배경 위에 표시됩니다.
+private let dynamicIslandAccent = Color(red: 1, green: 0.55, blue: 0.60)
+
+private struct DynamicIslandCompactTeamView: View {
+    let side: BroadcastTeamSide
+    let alignment: ScoreboardAlignment
+    let showsScore: Bool
+    let isFavorite: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if alignment == .trailing && showsScore { score }
+            Text(TeamIdentity.catalog[side.teamID]?.shortLabel ?? side.shortName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            if alignment == .leading && showsScore { score }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(showsScore ? "\(side.teamName) \(side.scoreText)점" : side.teamName)
+    }
+
+    private var score: some View {
+        Text(side.scoreText)
+            .font(.system(size: 14, weight: .bold))
+            .monospacedDigit()
+            .foregroundStyle(isFavorite ? dynamicIslandAccent : .white)
+            .contentTransition(.numericText())
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .layoutPriority(1)
+    }
+}
+
+private struct DynamicIslandMinimalView: View {
+    let game: BroadcastScoreboardGame
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Image(systemName: "baseball.fill")
+                .font(.system(size: game.isPreGame ? 16 : 9))
+                .foregroundStyle(dynamicIslandAccent)
+            if !game.isPreGame {
+                Text("\(game.away.scoreText):\(game.home.scoreText)")
+                    .font(.system(size: 12, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(game.isPreGame ? "야구 경기 예정" : "\(game.away.teamName) \(game.away.scoreText)점, \(game.home.teamName) \(game.home.scoreText)점, \(game.inningText)")
+    }
+}
+
 private struct DynamicIslandTeamView: View {
     let side: BroadcastTeamSide
     let alignment: ScoreboardAlignment
     let isBatting: Bool
     let showsScore: Bool
+    let isFavorite: Bool
 
     var body: some View {
         VStack(alignment: alignment.horizontal, spacing: 3) {
-            HStack(spacing: 3) {
-                if isBatting {
-                    Circle()
-                        .fill(.primary)
-                        .frame(width: 4, height: 4)
-                }
-
-                Text(isBatting ? "\(side.roleLabel) 공격" : side.roleLabel)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundStyle(isBatting ? .primary : .secondary)
-            }
-
-            HStack(spacing: 5) {
-                if alignment == .trailing && showsScore {
-                    Text(side.scoreText)
-                        .font(scoreFont)
-                        .monospacedDigit()
-                }
-
-                Text(side.shortName)
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(side.accent)
+            Text(TeamIdentity.catalog[side.teamID]?.shortLabel ?? side.shortName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            if showsScore {
+                Text(side.scoreText)
+                    .font(.system(size: 32, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(isFavorite ? dynamicIslandAccent : .white)
+                    .contentTransition(.numericText())
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-
-                if alignment == .leading && showsScore {
-                    Text(side.scoreText)
-                        .font(scoreFont)
-                        .monospacedDigit()
-                }
+                    .minimumScaleFactor(0.75)
             }
-            .foregroundStyle(.primary)
+            HStack(spacing: 4) {
+                if isBatting {
+                    Circle().fill(dynamicIslandAccent).frame(width: 4, height: 4)
+                }
+                Text(isBatting ? "\(side.roleLabel) · 공격" : side.roleLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.65))
+            }
         }
         .frame(maxWidth: .infinity, alignment: alignment.frame)
-    }
-
-    private var scoreFont: Font {
-        .system(size: 18, weight: .black, design: .rounded)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(side.teamName), \(side.roleLabel), \(showsScore ? side.scoreText + "점" : "경기 예정")\(isBatting ? ", 공격 중" : "")")
     }
 }
 
-// DynamicIslandStatusView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 private struct DynamicIslandStatusView: View {
     let inningText: String
     let statusText: String
-    let baseState: BroadcastBaseState?
 
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 4) {
             Text(inningText.isEmpty ? statusText : inningText)
-                .font(.caption.weight(.black))
-                .foregroundStyle(.primary)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
-
-            if let baseState {
-                BroadcastBaseDiamond(baseState: baseState, size: 18)
-            }
-
-            if statusText.isEmpty == false && statusText != inningText {
+                .minimumScaleFactor(0.8)
+            if !statusText.isEmpty && statusText != inningText && !inningText.isEmpty {
                 Text(statusText)
-                    .font(.system(size: 9, weight: .black, design: .rounded))
-                    .foregroundStyle(statusText == "LIVE" ? Color(red: 1, green: 0.36, blue: 0.36) : .secondary)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.65))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .minimumScaleFactor(0.8)
             }
         }
     }
 }
 
-// DynamicIslandBroadcastMetadataRow 구조체는 DynamicIslandBroadcastMetadataRow 타입의 역할과 값을 정의합니다.
 private struct DynamicIslandBroadcastMetadataRow: View {
     let game: BroadcastScoreboardGame
 
@@ -736,37 +759,38 @@ private struct DynamicIslandBroadcastMetadataRow: View {
         if game.isPreGame {
             HStack(spacing: 8) {
                 DynamicIslandMetadataSlot(text: "\(game.away.shortName) \(game.awayStartingPitcherName ?? "선발 미정")", alignment: .leading)
-                Text(game.statusText)
-                    .font(.caption2.weight(.black))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.70)
                 DynamicIslandMetadataSlot(text: "\(game.home.shortName) \(game.homeStartingPitcherName ?? "선발 미정")", alignment: .trailing)
             }
-            .frame(maxWidth: .infinity)
-        } else if game.hasBroadcastMetadata {
-            HStack(spacing: 8) {
-                DynamicIslandMetadataSlot(text: game.batterText.map { "B \($0)" }, alignment: .leading)
-
-                if let countText = game.countText {
-                    Text(countText)
-                        .font(.caption2.weight(.black))
-                        .monospacedDigit()
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.70)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 4)
+        } else {
+            VStack(spacing: 8) {
+                HStack(spacing: 12) {
+                    if let baseState = game.baseState {
+                        BroadcastBaseDiamond(baseState: baseState, size: 22)
+                    }
+                    if let countText = game.countText {
+                        Text(countText)
+                            .font(.system(size: 12, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .accessibilityLabel([KBOCountDisplay.balls(game.balls).map { "볼 \($0)" },
+                                                 KBOCountDisplay.strikes(game.strikes).map { "스트라이크 \($0)" },
+                                                 KBOCountDisplay.outs(game.outs).map { "아웃 \($0)" }].compactMap { $0 }.joined(separator: ", "))
+                    }
                 }
-
-                DynamicIslandMetadataSlot(text: game.pitcherText.map { "P \($0)" }, alignment: .trailing)
+                if game.batterText != nil || game.pitcherText != nil {
+                    HStack(spacing: 12) {
+                        DynamicIslandMetadataSlot(text: game.batterText.map { "타자 \($0)" }, alignment: .leading)
+                        DynamicIslandMetadataSlot(text: game.pitcherText.map { "투수 \($0)" }, alignment: .trailing)
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
-        } else if let metadataText = game.metadataText {
-            Text(metadataText)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 4)
         }
     }
 }
@@ -781,7 +805,7 @@ private struct DynamicIslandMetadataSlot: View {
             if let text {
                 Text(text)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.65))
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
             } else {
@@ -792,3 +816,46 @@ private struct DynamicIslandMetadataSlot: View {
         .frame(maxWidth: .infinity, alignment: alignment.frame)
     }
 }
+
+#if DEBUG
+private let islandPreviewAttributes = FavoriteTeamGameActivityAttributes(
+    gameID: "00000000-0000-0000-0000-000000000123",
+    favoriteTeamID: "lotte", favoriteTeamName: "롯데 자이언츠", favoriteTeamShortName: "롯데",
+    opponentTeamID: "doosan", opponentTeamName: "두산 베어스", opponentTeamShortName: "두산",
+    venue: "사직", isHomeGame: true
+)
+
+private extension FavoriteTeamGameActivityAttributes.ContentState {
+    static func islandPreview(favoriteScore: String = "4", opponentScore: String = "2", hasDetails: Bool = true) -> Self {
+        Self(isPreGame: false, favoriteScoreText: favoriteScore, opponentScoreText: opponentScore,
+             inningText: "7회 말", summaryText: "LIVE",
+             favoriteStartingPitcherName: nil, opponentStartingPitcherName: nil,
+             balls: hasDetails ? 2 : nil, strikes: hasDetails ? 1 : nil, outs: hasDetails ? 1 : nil,
+             runnerOnFirst: hasDetails ? true : nil, runnerOnSecond: hasDetails ? false : nil,
+             runnerOnThird: hasDetails ? true : nil,
+             currentBatterName: hasDetails ? "전준우" : nil, currentPitcherName: hasDetails ? "최승용" : nil)
+    }
+}
+
+#Preview("경기 중 · 접힘", as: .dynamicIsland(.compact), using: islandPreviewAttributes) {
+    KBOScoreLiveActivityWidget()
+} contentStates: {
+    FavoriteTeamGameActivityAttributes.ContentState.islandPreview()
+    FavoriteTeamGameActivityAttributes.ContentState.islandPreview(favoriteScore: "10", opponentScore: "12")
+}
+
+#Preview("경기 중 · 펼침", as: .dynamicIsland(.expanded), using: islandPreviewAttributes) {
+    KBOScoreLiveActivityWidget()
+} contentStates: {
+    FavoriteTeamGameActivityAttributes.ContentState.islandPreview()
+    FavoriteTeamGameActivityAttributes.ContentState.islandPreview(favoriteScore: "10", opponentScore: "12")
+    FavoriteTeamGameActivityAttributes.ContentState.islandPreview(hasDetails: false)
+}
+
+#Preview("경기 중 · 최소", as: .dynamicIsland(.minimal), using: islandPreviewAttributes) {
+    KBOScoreLiveActivityWidget()
+} contentStates: {
+    FavoriteTeamGameActivityAttributes.ContentState.islandPreview()
+    FavoriteTeamGameActivityAttributes.ContentState.islandPreview(favoriteScore: "10", opponentScore: "12")
+}
+#endif
