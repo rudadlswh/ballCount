@@ -159,49 +159,29 @@ private struct FavoriteTeamScheduleWidgetV2EntryView: View {
     }
 }
 
-// FavoriteTeamSchedulePlaceholderView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
+private enum ScheduleWidgetDateFormat {
+    static func dayNumber(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
+        return String(calendar.component(.day, from: date))
+    }
+    static let monthDay = Date.FormatStyle(locale: Locale(identifier: "ko_KR"), timeZone: TimeZone(identifier: "Asia/Seoul")!).month().day()
+    static let updated = Date.FormatStyle(locale: Locale(identifier: "ko_KR"), timeZone: TimeZone(identifier: "Asia/Seoul")!).month(.twoDigits).day(.twoDigits).hour().minute()
+}
+
+// 배경은 WidgetKit이 제거할 수 있게 분리하고, 콘텐츠 여백은 시스템에 맡깁니다.
 private struct FavoriteTeamSchedulePlaceholderView: View {
     let snapshot: FavoriteTeamScheduleWidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(.systemGray5))
-                    .frame(width: 88, height: 12)
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color(.systemGray5))
-                    .frame(width: 132, height: 18)
-            }
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 8) {
-                ForEach(Self.weekdaySymbols, id: \.self) { symbol in
-                    Text(symbol)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                }
-
-                ForEach(snapshot.days) { day in
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(day.isInDisplayedMonth ? Color(.systemGray6) : Color(.systemGray6).opacity(0.45))
-                        .frame(height: 42)
-                }
-            }
-        }
-        .padding(16)
-        .containerBackground(for: .widget) {
-            Color(.systemBackground)
-        }
+        FavoriteTeamScheduleCalendarView(snapshot: snapshot)
+            .redacted(reason: .placeholder)
+            .containerBackground(for: .widget) { StadiumPalette.app.background }
     }
-
-    private static let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
 }
 
-// FavoriteTeamScheduleContentView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 private struct FavoriteTeamScheduleContentView: View {
     @Environment(\.widgetRenderingMode) private var renderingMode
-
     let entry: FavoriteTeamScheduleWidgetV2Entry
 
     var body: some View {
@@ -210,265 +190,176 @@ private struct FavoriteTeamScheduleContentView: View {
             case .noFavorite:
                 FavoriteTeamScheduleMessageView(
                     title: "응원팀을 선택해 주세요",
-                    message: "설정에서 응원팀을 선택하면 월간 일정이 표시됩니다."
+                    message: "앱 설정에서 응원팀을 선택하면 월간 일정을 확인할 수 있어요.",
+                    symbol: "baseball"
                 )
-            case .unavailable(let reason):
+            case .unavailable:
                 FavoriteTeamScheduleMessageView(
-                    title: "일정 데이터를 불러올 수 없습니다",
-                    message: reason
+                    title: "일정을 확인해 주세요",
+                    message: "앱을 열어 이번 달 일정을 새로 불러와 주세요.",
+                    symbol: "calendar.badge.exclamationmark"
                 )
             case .content(let snapshot):
-                FavoriteTeamScheduleCalendarView(
-                    snapshot: snapshot,
-                    isFullColor: renderingMode == .fullColor
-                )
+                FavoriteTeamScheduleCalendarView(snapshot: snapshot)
             case .placeholder:
                 EmptyView()
             }
         }
         .containerBackground(for: .widget) {
-            renderingMode == .fullColor ? Color(.systemBackground) : Color.clear
+            renderingMode == .fullColor ? StadiumPalette.app.background : Color.clear
         }
     }
 }
 
-// FavoriteTeamScheduleMessageView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 private struct FavoriteTeamScheduleMessageView: View {
     let title: String
     let message: String
+    let symbol: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.primary)
-
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.title2)
+                .widgetAccentable()
+            Text(title).font(.headline)
             Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(18)
     }
 }
 
-// FavoriteTeamScheduleCalendarView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 private struct FavoriteTeamScheduleCalendarView: View {
+    @Environment(\.widgetRenderingMode) private var renderingMode
     let snapshot: FavoriteTeamScheduleWidgetSnapshot
-    let isFullColor: Bool
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
     private let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
-
-    private var theme: TeamTheme {
-        TeamTheme.resolve(for: snapshot.teamID)
+    private var isFullColor: Bool { renderingMode == .fullColor }
+    private var primary: Color { isFullColor ? StadiumPalette.app.textPrimary : .primary }
+    private var secondary: Color { isFullColor ? StadiumPalette.app.textSecondary : .secondary }
+    private var weeks: [[FavoriteTeamScheduleWidgetSnapshot.Day]] {
+        stride(from: 0, to: snapshot.days.count, by: 7).map {
+            Array(snapshot.days[$0..<min($0 + 7, snapshot.days.count)])
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             header
-
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(weekdaySymbols, id: \.self) { symbol in
-                    Text(symbol)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
+            HStack(spacing: 3) {
+                ForEach(weekdaySymbols.indices, id: \.self) { index in
+                    Text(weekdaySymbols[index])
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(index == 0 && isFullColor ? StadiumPalette.app.tint : secondary)
                         .frame(maxWidth: .infinity)
                 }
-
-                ForEach(snapshot.days) { day in
-                    FavoriteTeamScheduleDayCell(
-                        day: day,
-                        accent: theme.accent,
-                        chipBackground: theme.chipBackground,
-                        isFullColor: isFullColor
-                    )
+            }
+            VStack(spacing: 3) {
+                ForEach(weeks.indices, id: \.self) { index in
+                    HStack(spacing: 3) {
+                        ForEach(weeks[index]) { day in
+                            FavoriteTeamScheduleDayCell(day: day)
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
                 }
             }
-
-            if snapshot.state == .emptySchedule {
-                Text("표시할 일정이 없습니다")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            .frame(maxHeight: .infinity)
+            HStack {
+                Text(snapshot.state == .emptySchedule ? "표시할 일정이 없습니다" : "홈 · 원정 / 승 · 패 · 무")
+                Spacer(minLength: 4)
+                Text("갱신 " + snapshot.generatedAt.formatted(ScheduleWidgetDateFormat.updated))
+                    .accessibilityLabel("업데이트 \(snapshot.generatedAt.formatted(ScheduleWidgetDateFormat.updated))")
             }
+            .font(.system(size: 10))
+            .foregroundStyle(secondary)
         }
-        .padding(16)
+        .foregroundStyle(primary)
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(snapshot.teamName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(snapshot.teamName) · 경기 일정")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(secondary)
+                    .lineLimit(1)
                 Text(snapshot.monthTitle)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 20, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-
-            Spacer(minLength: 8)
-
+            Spacer(minLength: 4)
             Text(snapshot.monthSummaryText)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(isFullColor ? theme.accent : .primary)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isFullColor ? StadiumPalette.app.tint : .primary)
+                .lineLimit(1)
                 .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(isFullColor ? theme.chipBackground : Color.primary.opacity(0.12))
-                )
+                .padding(.vertical, 6)
+                .background {
+                    Capsule().fill(isFullColor ? StadiumPalette.app.tabBarSelectionSurface : Color.primary.opacity(0.12))
+                }
                 .widgetAccentable()
         }
     }
 }
 
-// FavoriteTeamScheduleDayCell 구조체는 FavoriteTeamScheduleDayCell 타입의 역할과 값을 정의합니다.
 private struct FavoriteTeamScheduleDayCell: View {
+    @Environment(\.widgetRenderingMode) private var renderingMode
     let day: FavoriteTeamScheduleWidgetSnapshot.Day
-    let accent: Color
-    let chipBackground: Color
-    let isFullColor: Bool
+    private var isFullColor: Bool { renderingMode == .fullColor }
+    private var accent: Color { isFullColor ? StadiumPalette.app.tint : .primary }
+    private var secondary: Color { isFullColor ? StadiumPalette.app.textSecondary : .secondary }
+    private var opponent: String {
+        guard day.gameCount > 0 else { return "" }
+        return TeamIdentity.catalog[day.opponentTeamID ?? ""]?.shortLabel ?? "경기"
+    }
+    private var detail: String {
+        guard day.gameCount > 0 else { return "" }
+        if day.dominantStatus == .cancelled { return "취소" }
+        if day.dominantStatus == .rainDelay { return "우천" }
+        let role = day.favoriteTeamIsHome.map { $0 ? "홈" : "원정" }
+        let result = day.favoriteTeamResult.map {
+            switch $0 { case .win: "승"; case .loss: "패"; case .tie: "무" }
+        }
+        let status = result ?? (day.dominantStatus == .live ? "LIVE" : nil)
+        return [role, status, day.gameCount > 1 ? "\(day.gameCount)경기" : nil].compactMap { $0 }.joined(separator: "·")
+    }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(day.date.formatted(.dateTime.day()))
-                .font(.caption.weight(day.isToday ? .bold : .medium))
-                .foregroundStyle(dayNumberColor)
-
-            ZStack(alignment: .topTrailing) {
-                if day.gameCount > 0 {
-                    FavoriteTeamScheduleOpponentMark(
-                        teamID: day.opponentTeamID,
-                        status: day.dominantStatus,
-                        favoriteTeamIsHome: day.favoriteTeamIsHome,
-                        accent: accent,
-                        isFullColor: isFullColor,
-                        count: day.gameCount
-                    )
-
-                    if day.gameCount > 1 {
-                        Text("\(day.gameCount)")
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Capsule(style: .continuous).fill(accent))
-                            .offset(x: 4, y: -4)
-                            .widgetAccentable()
-                    }
-                }
-            }
-            .frame(height: 24)
+        VStack(spacing: 1) {
+            Text(ScheduleWidgetDateFormat.dayNumber(day.date))
+                .font(.system(size: 13, weight: day.isToday ? .bold : .medium))
+                .monospacedDigit()
+                .foregroundStyle(day.isToday ? accent : (isFullColor ? StadiumPalette.app.textPrimary : .primary))
+            Text(opponent.isEmpty ? " " : opponent)
+                .font(.system(size: 11, weight: .semibold))
+            Text(detail.isEmpty ? " " : detail)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(secondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 46)
-        .background(cellBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(cellBorderColor, lineWidth: day.isToday ? 1 : 0)
-        )
-    }
-
-    private var dayNumberColor: Color {
-        day.isInDisplayedMonth ? .primary : .secondary.opacity(0.6)
-    }
-
-    private var cellBackground: Color {
-        if day.isToday {
-            return .clear
-        }
-        if let result = day.favoriteTeamResult {
-            switch result {
-            case .win:
-                return Color(red: 0.13, green: 0.44, blue: 0.88).opacity(isFullColor ? 0.16 : 0.10)
-            case .loss:
-                return Color(red: 0.82, green: 0.15, blue: 0.24).opacity(isFullColor ? 0.14 : 0.10)
-            case .tie:
-                return chipBackground
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            if day.isToday {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(accent.opacity(isFullColor ? 0.10 : 0.12))
+                    .widgetAccentable()
             }
         }
-        return .clear
-    }
-
-    private var cellBorderColor: Color {
-        day.isToday ? Color(red: 0.13, green: 0.44, blue: 0.88).opacity(isFullColor ? 0.9 : 0.82) : .clear
-    }
-}
-
-// FavoriteTeamScheduleOpponentMark 구조체는 FavoriteTeamScheduleOpponentMark 타입의 역할과 값을 정의합니다.
-private struct FavoriteTeamScheduleOpponentMark: View {
-    let teamID: String?
-    let status: FavoriteTeamScheduleWidgetGameStatus?
-    let favoriteTeamIsHome: Bool?
-    let accent: Color
-    let isFullColor: Bool
-    let count: Int
-
-    private var size: CGFloat {
-        count > 1 ? 22 : 20
-    }
-
-    private var homeAwayLabel: String? {
-        guard let favoriteTeamIsHome else { return nil }
-        return favoriteTeamIsHome ? "H" : "A"
-    }
-
-    var body: some View {
-        if let teamID, let identity = TeamIdentity.catalog[teamID] {
-            Text(identity.monogram)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 5)
-                .frame(height: size)
-                .background(
-                    RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                        .fill(isFullColor ? identity.theme.chipBackground : Color.primary.opacity(0.12))
-                )
-                .overlay(alignment: .bottomTrailing) {
-                    if let homeAwayLabel {
-                        FavoriteTeamScheduleHomeAwayBadge(label: homeAwayLabel, isFullColor: isFullColor)
-                            .offset(x: 3, y: 3)
-                    }
-                }
-                .accessibilityLabel(accessibilityLabel(teamName: identity.teamDisplayName))
-                .widgetAccentable()
-        } else {
-            Circle()
-                .fill(status?.color ?? accent)
-                .frame(width: count > 1 ? 10 : 6, height: count > 1 ? 10 : 6)
-                .widgetAccentable()
+        .overlay {
+            if day.isToday {
+                RoundedRectangle(cornerRadius: 9).strokeBorder(accent, lineWidth: 1)
+                    .widgetAccentable()
+            }
         }
-    }
-
-    // accessibilityLabel 메서드는 화면 표시와 디버그에 사용할 문구를 구성합니다.
-    private func accessibilityLabel(teamName: String) -> String {
-        guard let favoriteTeamIsHome else { return "\(teamName)" }
-        return favoriteTeamIsHome ? "\(teamName), 홈 경기" : "\(teamName), 원정 경기"
-    }
-}
-
-// FavoriteTeamScheduleHomeAwayBadge 구조체는 FavoriteTeamScheduleHomeAwayBadge 타입의 역할과 값을 정의합니다.
-private struct FavoriteTeamScheduleHomeAwayBadge: View {
-    let label: String
-    let isFullColor: Bool
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 7, weight: .bold, design: .rounded))
-            .foregroundStyle(isFullColor ? .secondary : .primary)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(isFullColor ? Color(.systemBackground).opacity(0.92) : Color.primary.opacity(0.16))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(Color.primary.opacity(isFullColor ? 0.10 : 0.08), lineWidth: 0.5)
-            )
+        .opacity(day.isInDisplayedMonth ? 1 : 0.35)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(day.isToday ? "오늘, " : "")\(day.date.formatted(ScheduleWidgetDateFormat.monthDay)), \(day.gameCount == 0 ? "경기 없음" : opponent + ", " + detail)")
     }
 }
 
@@ -476,7 +367,9 @@ private struct FavoriteTeamScheduleHomeAwayBadge: View {
 private enum FavoriteTeamScheduleWidgetV2Preview {
     // sampleSnapshot 메서드는 이 타입의 주요 동작을 수행합니다.
     static func sampleSnapshot(referenceDate: Date) -> FavoriteTeamScheduleWidgetSnapshot {
-        let calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
+        calendar.firstWeekday = 1
         let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: referenceDate)) ?? referenceDate
         let monthInterval = calendar.dateInterval(of: .month, for: monthStart) ?? DateInterval(start: monthStart, duration: 60 * 60 * 24 * 30)
         let firstWeek = calendar.dateInterval(of: .weekOfMonth, for: monthInterval.start) ?? monthInterval
@@ -488,7 +381,7 @@ private enum FavoriteTeamScheduleWidgetV2Preview {
         var offset = 0
         while cursor < lastWeek.end {
             let isInMonth = calendar.isDate(cursor, equalTo: monthStart, toGranularity: .month)
-            let isToday = calendar.isDateInToday(cursor)
+            let isToday = calendar.isDate(cursor, inSameDayAs: referenceDate)
             let sampleGame: (count: Int, teamID: String?, result: FavoriteTeamScheduleWidgetTeamResult?, status: FavoriteTeamScheduleWidgetGameStatus?)?
             let sampleHomeGame: Bool?
             switch offset {
@@ -525,9 +418,9 @@ private enum FavoriteTeamScheduleWidgetV2Preview {
         return FavoriteTeamScheduleWidgetSnapshot(
             generatedAt: referenceDate,
             refreshAfter: referenceDate.addingTimeInterval(60 * 60 * 6),
-            teamID: "lg",
-            teamName: "LG",
-            teamShortName: "LG",
+            teamID: "lotte",
+            teamName: "롯데 자이언츠",
+            teamShortName: "롯데",
             displayedMonth: monthStart,
             monthTitle: {
                 let formatter = DateFormatter()
@@ -552,23 +445,6 @@ private extension FavoriteTeamScheduleWidgetSharedLoadIssue {
             "공유 일정 파일이 없습니다"
         case .fileReadFailed, .fileDecodeFailed:
             "공유 일정 데이터를 읽을 수 없습니다"
-        }
-    }
-}
-
-private extension FavoriteTeamScheduleWidgetGameStatus {
-    var color: Color {
-        switch self {
-        case .upcoming:
-            Color(red: 0.13, green: 0.44, blue: 0.88)
-        case .live:
-            Color(red: 0.82, green: 0.15, blue: 0.24)
-        case .final:
-            Color(red: 0.39, green: 0.45, blue: 0.58)
-        case .rainDelay:
-            Color(red: 0.88, green: 0.53, blue: 0.12)
-        case .cancelled:
-            Color(red: 0.44, green: 0.48, blue: 0.56)
         }
     }
 }
@@ -617,26 +493,32 @@ private struct FavoriteTeamLockScreenScheduleView: View {
     }
 
     private func schedule(_ snapshot: FavoriteTeamScheduleWidgetSnapshot) -> some View {
-        HStack(spacing: 0) {
-            ForEach(nearbyDays(in: snapshot)) { day in
-                VStack(spacing: 2) {
-                    Text(day.date.formatted(.dateTime.day()))
-                        .font(.caption.weight(isToday(day) ? .bold : .medium))
-                        .foregroundStyle(isToday(day) ? .primary : .secondary)
-                        .underline(isToday(day))
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(snapshot.teamShortName) · 가까운 일정")
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+            HStack(spacing: 0) {
+                ForEach(nearbyDays(in: snapshot)) { day in
+                    VStack(spacing: 2) {
+                        Text(ScheduleWidgetDateFormat.dayNumber(day.date))
+                            .font(.caption.weight(isToday(day) ? .bold : .medium))
+                            .foregroundStyle(isToday(day) ? .primary : .secondary)
+                            .underline(isToday(day))
 
-                    if let opponentName = opponentName(for: day) {
-                        Text(opponentName)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    } else {
-                        Color.clear
-                            .frame(height: 12)
+                        if let opponentName = opponentName(for: day) {
+                            Text(opponentName)
+                                .font(.caption2.weight(.semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                        } else {
+                            Color.clear
+                                .frame(height: 12)
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(isToday(day) ? "오늘" : day.date.formatted(ScheduleWidgetDateFormat.monthDay)), \(opponentName(for: day) ?? "경기 없음")")
                 }
-                .frame(maxWidth: .infinity)
-                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -656,7 +538,7 @@ private struct FavoriteTeamLockScreenScheduleView: View {
 
     private func opponentName(for day: FavoriteTeamScheduleWidgetSnapshot.Day) -> String? {
         guard day.gameCount > 0, let teamID = day.opponentTeamID else { return nil }
-        return TeamIdentity.catalog[teamID]?.teamDisplayName
+        return TeamIdentity.catalog[teamID]?.shortLabel
     }
 
     private func message(_ text: String) -> some View {
@@ -694,28 +576,33 @@ private struct FavoriteTeamNextGameCircularView: View {
     }
 
     var body: some View {
-        Group {
-            switch entry.content {
-            case .placeholder(let snapshot), .content(let snapshot):
-                if let game = nextGame(in: snapshot),
-                   let opponent = TeamIdentity.catalog[game.opponentTeamID ?? ""]?.teamDisplayName {
-                    VStack(spacing: 1) {
-                        Text(opponent)
-                            .font(.system(size: 17, weight: .bold, design: .rounded))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
+        ZStack {
+            AccessoryWidgetBackground()
+            Group {
+                switch entry.content {
+                case .placeholder(let snapshot), .content(let snapshot):
+                    if let game = nextGame(in: snapshot) {
+                        let opponent = TeamIdentity.catalog[game.opponentTeamID ?? ""]?.shortLabel ?? "경기"
+                        VStack(spacing: 1) {
+                            Text(opponent)
+                                .font(.system(size: 16, weight: .bold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
 
-                        Text(dateLabel(for: game.date))
-                            .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
+                            Text(dateLabel(for: game.date))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("다음 경기, \(opponent), \(dateLabel(for: game.date))")
+                    } else {
+                        emptyLabel("경기 없음")
                     }
-                } else {
-                    emptyLabel("경기 없음")
+                case .noFavorite:
+                    emptyLabel("응원팀 없음")
+                case .unavailable:
+                    emptyLabel("확인 필요")
                 }
-            case .noFavorite:
-                emptyLabel("응원팀 없음")
-            case .unavailable:
-                emptyLabel("일정 없음")
             }
         }
         .multilineTextAlignment(.center)
@@ -750,15 +637,24 @@ private struct FavoriteTeamNextGameCircularView: View {
 
     private func emptyLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .font(.system(size: 12, weight: .semibold))
             .minimumScaleFactor(0.75)
     }
 }
 
-#Preview(as: .systemLarge) {
+#Preview("월간 일정 · 4/5/6주", as: .systemLarge) {
     FavoriteTeamScheduleWidgetV2()
 } timeline: {
-    FavoriteTeamScheduleWidgetV2Entry.preview(date: Date())
+    FavoriteTeamScheduleWidgetV2Entry.preview(date: ISO8601DateFormatter().date(from: "2026-02-13T09:00:00Z")!)
+    FavoriteTeamScheduleWidgetV2Entry.preview(date: ISO8601DateFormatter().date(from: "2026-10-02T09:00:00Z")!)
+    FavoriteTeamScheduleWidgetV2Entry.preview(date: ISO8601DateFormatter().date(from: "2026-08-15T09:00:00Z")!)
+}
+
+#Preview("응원팀 미선택 · 일정 불러오기", as: .systemLarge) {
+    FavoriteTeamScheduleWidgetV2()
+} timeline: {
+    FavoriteTeamScheduleWidgetV2Entry(date: Date(), refreshAfter: Date(), content: .noFavorite)
+    FavoriteTeamScheduleWidgetV2Entry(date: Date(), refreshAfter: Date(), content: .unavailable("미리보기"))
 }
 
 #Preview(as: .accessoryRectangular) {
