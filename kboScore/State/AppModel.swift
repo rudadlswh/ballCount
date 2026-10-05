@@ -724,6 +724,12 @@ final class AppModel {
         await refreshStandings(season: season, logsBootstrapJoin: false)
     }
 
+    func fetchTeamComparisonGames(season: Int) async throws -> [GameDetail] {
+        ensureCatalogTeamsLoadedIfNeeded()
+        // The visible standings can come from rank rows without a complete season game list.
+        return try await fetchStandingsSourceGames(season: season)
+    }
+
     // prefetchStandingsSourceIfNeeded 메서드는 이 타입의 주요 동작을 수행합니다.
     func prefetchStandingsSourceIfNeeded(season requestedSeason: Int? = nil) async {
         let season = requestedSeason ?? currentStandingsSeason()

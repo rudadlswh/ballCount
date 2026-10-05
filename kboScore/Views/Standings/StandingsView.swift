@@ -17,6 +17,9 @@ struct StandingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .subheadline) private var tableTextScale = 1.0
     @ScaledMetric(relativeTo: .largeTitle) private var rankSize = 36.0
+    @State private var showsTeamComparison = false
+
+    private var season: Int { Calendar.current.component(.year, from: Date()) }
 
     var body: some View {
         NavigationStack {
@@ -31,23 +34,35 @@ struct StandingsView: View {
             .refreshable {
                 await appModel.refreshStandings()
             }
+            .sheet(isPresented: $showsTeamComparison) {
+                StandingsComparisonView(season: season)
+            }
         }
     }
 
     private var standingsContent: some View {
         VStack(alignment: .leading, spacing: 18) {
             AppScreenHeader(title: "순위", subtitle: "우리 팀의 오늘을 한눈에")
-            HStack {
-                Text("팀 순위").font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 36)
-                    .background(StadiumPalette.app.elevatedCard, in: Capsule())
-                Text("정규시즌").font(.subheadline).foregroundStyle(StadiumPalette.app.textSecondary)
-                    .frame(maxWidth: .infinity)
-            }.padding(4).background(StadiumPalette.app.recessedSurface, in: Capsule())
             if let favorite = appModel.standingsSnapshots.first(where: { $0.team.id == appModel.settings.favoriteTeamID }) {
                 favoriteSummary(favorite)
             }
-            AppSectionTitle(title: "\(Calendar.current.component(.year, from: Date())) 정규시즌")
+            HStack {
+                Text("\(String(season)) 정규시즌")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button {
+                    showsTeamComparison = true
+                } label: {
+                    Label("비교하기", systemImage: "arrow.left.arrow.right")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(StadiumPalette.app.tint)
+                .accessibilityIdentifier("standingsCompare")
+            }
             switch standingsContentState {
             case .loading:
                 ProgressView("순위 데이터를 불러오는 중")

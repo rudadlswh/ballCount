@@ -22,7 +22,7 @@ struct StandingsTableMetrics {
         self.availableWidth = availableWidth
     }
 
-    var rowHeight: CGFloat { 34.5 * textScale }
+    var rowHeight: CGFloat { 40 * textScale }
     var horizontalPadding: CGFloat { 12 * textScale }
     var spacing: CGFloat { 8 * textScale }
     var rankWidth: CGFloat { 20 * textScale }

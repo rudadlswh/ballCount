@@ -88,6 +88,36 @@ final class LandscapeLayoutTests: XCTestCase {
         attach("순위-가로스크롤")
     }
 
+    @MainActor func testStandingsComparisonSelectsAndChangesTwoTeams() throws {
+        let app = launchApp()
+        app.tabBars.buttons["순위"].tap()
+        let compareButton = app.buttons["standingsCompare"]
+        XCTAssertTrue(compareButton.waitForExistence(timeout: 10))
+        compareButton.tap()
+        let firstTeam = app.buttons["comparisonTeam.doosan"]
+        XCTAssertTrue(firstTeam.waitForExistence(timeout: 10))
+        for button in app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "comparisonTeam.")).allElementsBoundByIndex {
+            if button.isSelected { button.tap() }
+        }
+        firstTeam.tap()
+        app.buttons["comparisonTeam.hanwha"].tap()
+        let record = app.staticTexts["comparisonRecord"]
+        XCTAssertTrue(record.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["comparisonMatchup"].label.contains("두산 vs 한화"))
+        XCTAssertTrue(record.label.contains("두산 기준"))
+        attach("순위-두산-한화-상대전적")
+
+        app.buttons["comparisonTeam.kia"].tap()
+        XCTAssertTrue(app.staticTexts["comparisonMatchup"].label.contains("두산 vs 기아"))
+        XCTAssertFalse(app.buttons["comparisonTeam.hanwha"].isSelected)
+        XCTAssertTrue(firstTeam.isSelected)
+        XCTAssertTrue(app.buttons["comparisonTeam.kia"].isSelected)
+        firstTeam.tap()
+        XCTAssertFalse(record.exists)
+        app.buttons["닫기"].tap()
+        XCTAssertTrue(compareButton.waitForExistence(timeout: 10))
+    }
+
     @MainActor func testTabContentStaysWithinSafeAreasAfterRotation() throws {
         let app = launchApp()
         defer { XCUIDevice.shared.orientation = .portrait }
