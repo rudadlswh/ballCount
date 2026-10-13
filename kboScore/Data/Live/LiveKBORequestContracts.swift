@@ -30,7 +30,7 @@ struct OfficialKBOMonthlyScheduleRequestContract: Sendable {
     }
 
     nonisolated var seriesIDList: String {
-        month.month == 3 ? "0,9" : "0"
+        month.month == 3 ? "0,9,3,4,5,7" : "0,3,4,5,7"
     }
 
     nonisolated var queryItems: [URLQueryItem] {

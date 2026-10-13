@@ -8345,7 +8345,7 @@ struct kboScoreTests {
         #expect(request.value(forHTTPHeaderField: "X-Requested-With") == "XMLHttpRequest")
         #expect(request.value(forHTTPHeaderField: "Content-Type")?.contains("application/x-www-form-urlencoded") == true)
         #expect(body?.contains("leId=1") == true)
-        #expect(body?.contains("srIdList=0,9") == true)
+        #expect(body?.contains("srIdList=0,9,3,4,5,7&") == true)
         #expect(body?.contains("seasonId=2026") == true)
         #expect(body?.contains("gameMonth=03") == true)
         #expect(body?.contains("teamId=") == true)
@@ -10482,11 +10482,51 @@ struct kboScoreTests {
         #expect(request.value(forHTTPHeaderField: "X-Requested-With") == "XMLHttpRequest")
         #expect(request.value(forHTTPHeaderField: "Content-Type")?.contains("application/x-www-form-urlencoded") == true)
         #expect(body?.contains("leId=1") == true)
-        #expect(body?.contains("srIdList=0") == true)
+        #expect(body?.contains("srIdList=0,3,4,5,7&") == true)
         #expect(body?.contains("srIdList=0,9") == false)
         #expect(body?.contains("seasonId=2026") == true)
         #expect(body?.contains("gameMonth=04") == true)
         #expect(body?.contains("teamId=") == true)
+    }
+
+    @Test func liveRepositoryFetchesOfficialPostseasonMonthlySchedule() async throws {
+        let payload = try fixtureData(named: "2026-kbo-official-schedule-postseason-202610")
+        let repository = LiveKBORepository(
+            baseURL: URL(string: "https://www.koreabaseball.com/")!,
+            session: makeStubSession()
+        )
+        URLProtocolStub.testResponses = [
+            "https://www.koreabaseball.com/ws/Schedule.asmx/GetScheduleList": StubResponse(statusCode: 200, data: payload)
+        ]
+        URLProtocolStub.lastRequest = nil
+        defer {
+            URLProtocolStub.testResponses = [:]
+            URLProtocolStub.lastRequest = nil
+        }
+
+        let games = try await repository.fetchMonthlySchedule(for: KBOMonthScheduleKey(year: 2026, month: 10))
+        let request = try #require(URLProtocolStub.lastRequest)
+        let body = String(data: request.httpBody ?? Data(), encoding: .utf8)
+
+        #expect(body?.contains("srIdList=0,3,4,5,7&") == true)
+        #expect(body?.contains("gameMonth=10") == true)
+        #expect(games.map(\.providerGameID) == ["20261014OBLG0", "20261015OBLG0"])
+        #expect(games.allSatisfy { $0.awayTeam.id == "doosan" && $0.homeTeam.id == "lg" })
+        #expect(games.allSatisfy { $0.status == .upcoming && $0.venue == "잠실" })
+        #expect(games.map(\.scheduledStart) == [
+            isoDate("2026-10-14T18:30:00+09:00"),
+            isoDate("2026-10-15T18:30:00+09:00")
+        ])
+    }
+
+    @Test(arguments: [10, 11])
+    func officialMonthlyScheduleIncludesEveryPostseasonSeries(month: Int) throws {
+        let contract = try OfficialKBOMonthlyScheduleRequestContract(
+            baseURL: URL(string: "https://www.koreabaseball.com/")!,
+            month: KBOMonthScheduleKey(year: 2026, month: month)
+        )
+        let series = Set(contract.seriesIDList.split(separator: ","))
+        #expect(Set(["0", "3", "4", "5", "7"]).isSubset(of: series))
     }
 
     // liveRepositoryMapsBackendStandingsPayload 메서드는 이 타입의 주요 동작을 수행합니다.
