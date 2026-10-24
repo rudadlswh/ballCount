@@ -35,7 +35,26 @@ enum HomeHeroGamePresentation {
 
     // accessibilityLabel 메서드는 화면 표시와 디버그에 사용할 문구를 구성합니다.
     static func accessibilityLabel(for summary: GameSummary) -> String {
-        "\(summary.awayTeam.displayName) 대 \(summary.homeTeam.displayName), 원정 선발 \(pitcherText(summary.awayStartingPitcherName)), 홈 선발 \(pitcherText(summary.homeStartingPitcherName)), \(timeText(for: summary)), \(venueText(for: summary))"
+        var parts = ["\(summary.awayTeam.displayName) 대 \(summary.homeTeam.displayName)", summary.status.title]
+        let time = timeText(for: summary)
+        if time != summary.status.title { parts.append(time) }
+        parts.append(venueText(for: summary))
+        if summary.showsLiveOrFinalScore {
+            parts.append("원정 점수 \(summary.awayScore.map(String.init) ?? "정보 없음"), 홈 점수 \(summary.homeScore.map(String.init) ?? "정보 없음")")
+        }
+        parts.append("원정 선발 \(pitcherText(summary.awayStartingPitcherName)), 홈 선발 \(pitcherText(summary.homeStartingPitcherName))")
+        if summary.status.isLiveLike {
+            parts.append("볼 \(KBOCountDisplay.balls(summary.balls).map(String.init) ?? "정보 없음"), 스트라이크 \(KBOCountDisplay.strikes(summary.strikes).map(String.init) ?? "정보 없음"), 아웃 \(KBOCountDisplay.outs(summary.outs).map(String.init) ?? "정보 없음")")
+            if let bases = summary.bases {
+                parts.append(basesAccessibilityLabel(for: bases))
+            }
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    static func basesAccessibilityLabel(for bases: RunnerState) -> String {
+        let occupied = [bases.first ? "1루" : nil, bases.second ? "2루" : nil, bases.third ? "3루" : nil].compactMap { $0 }
+        return occupied.isEmpty ? "주자 없음" : occupied.joined(separator: ", ") + " 주자 있음"
     }
 
     // countText 메서드는 이 타입의 주요 동작을 수행합니다.

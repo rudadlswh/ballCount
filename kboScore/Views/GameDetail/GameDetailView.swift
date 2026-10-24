@@ -97,21 +97,18 @@ struct GameDetailView: View {
         }
         .background {
             if let palette = appModel.favoriteStadiumPalette {
-                LinearGradient(
-                    colors: [palette.background, palette.sectionBackground],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                palette.background
                 .ignoresSafeArea()
             } else {
                 KBOLivePalette.background
             }
         }
         .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? Color.primary)
+        .toolbar(.visible, for: .navigationBar)
         .navigationTitle("경기 상세")
         .navigationBarTitleDisplayMode(.inline)
         .stadiumNavigationChrome(appModel.favoriteStadiumPalette)
-        .tint(appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.accent)
+        .tint(appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent)
         .task(id: viewModel.stableIdentity) {
             let initialRenderStartedAt = Date()
             if viewModel.game == nil {
@@ -405,7 +402,7 @@ struct GameDetailView: View {
                     palette?.elevatedCard ?? Color(.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                 )
-                .foregroundStyle(isAttended ? (palette?.primary ?? appModel.currentTheme.accent) : (palette?.textPrimary ?? .primary))
+                .foregroundStyle(isAttended ? (palette?.tint ?? appModel.currentTheme.accent) : (palette?.textPrimary ?? .primary))
                 .opacity(isAttendanceButtonDisabled ? 0.55 : 1)
             }
             .buttonStyle(.plain)
@@ -1045,12 +1042,13 @@ struct BaseRunnerDisplayItem: Identifiable, Equatable {
 // GameStatusSummaryCard 구조체는 GameStatusSummaryCard 타입의 역할과 값을 정의합니다.
 private struct GameStatusSummaryCard: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let presentation: GameDetailPresentation
 
     var body: some View {
         let palette = appModel.favoriteStadiumPalette
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
+            summaryLayout {
                 ScoreColumn(
                     title: "원정",
                     team: presentation.game.awayTeam,
@@ -1067,11 +1065,11 @@ private struct GameStatusSummaryCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if presentation.showsLiveOrFinalScore {
                         Text("\(presentation.displayAwayScore) : \(presentation.displayHomeScore)")
-                            .font(.system(size: 36, weight: .heavy, design: .rounded))
+                            .font(.largeTitle.weight(.bold))
                             .monospacedDigit()
                     } else {
                         Text(presentation.startTimeText ?? "TBD")
-                            .font(.system(size: 28, weight: .heavy, design: .rounded))
+                            .font(.title.weight(.bold))
                             .monospacedDigit()
                     }
 
@@ -1108,6 +1106,12 @@ private struct GameStatusSummaryCard: View {
         )
     }
 
+    private var summaryLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .center, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+    }
+
     private var statusTitle: String {
         presentation.inningText ?? presentation.status.title
     }
@@ -1137,7 +1141,7 @@ private struct ScoreColumn: View {
         VStack(spacing: 8) {
             Text(title)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(tint)
+                .foregroundStyle(.secondary)
             Text(team.displayName)
                 .font(.title3.weight(.heavy))
                 .lineLimit(2)
@@ -1185,19 +1189,21 @@ private struct LiveSituationRow: View {
 // LiveSituationSummaryContent 구조체는 주자 상황과 카운트를 하나의 카드 안에 표시합니다.
 private struct LiveSituationSummaryContent: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let presentation: GameDetailPresentation
 
     var body: some View {
         let _ = presentation.logBaseRunnersBeforeRendering()
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 0) {
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16)) : AnyLayout(HStackLayout(spacing: 0))
+            layout {
                 GameDetailBasesDiamondView(
                     bases: presentation.liveSituation.bases,
-                    tint: appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.accent,
+                    tint: appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent,
                     borderTint: baseBorderTint
                 )
 
-                Spacer(minLength: 36)
+                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 36) }
 
                 CountDotsStack(
                     balls: KBOCountDisplay.balls(presentation.liveSituation.balls),
@@ -1218,7 +1224,7 @@ private struct LiveSituationSummaryContent: View {
         case "kt", "lg":
             .white
         default:
-            appModel.favoriteStadiumPalette?.primary ?? appModel.currentTheme.accent
+            appModel.favoriteStadiumPalette?.tint ?? appModel.currentTheme.accent
         }
     }
 }
@@ -1239,6 +1245,8 @@ private struct GameDetailBasesDiamondView: View {
                 .offset(x: -25, y: 4)
         }
         .frame(width: 96, height: 74)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(HomeHeroGamePresentation.basesAccessibilityLabel(for: bases))
     }
 }
 
@@ -1271,10 +1279,12 @@ private struct GameDetailBaseMarker: View {
 
 // BaseRunnerGrid 구조체는 1루, 2루, 3루 주자 이름을 같은 폭의 3열로 표시합니다.
 private struct BaseRunnerGrid: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let runners: [BaseRunnerDisplayItem]
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+        return layout {
             ForEach(baseColumns, id: \.id) { column in
                 VStack(spacing: 4) {
                     Text(column.title)
@@ -1329,13 +1339,24 @@ private struct CountDotsRow: View {
             Text(label)
                 .font(.caption.weight(.heavy))
                 .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                .frame(width: 12, alignment: .leading)
+            Text(value == nil ? "–" : String(normalizedValue))
+                .font(.caption.monospacedDigit())
 
             ForEach(0..<maxValue, id: \.self) { index in
                 Circle()
                     .fill(index < normalizedValue ? tint : tint.opacity(0.18))
                     .frame(width: 8, height: 8)
             }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(countName) \(value == nil ? "정보 없음" : String(normalizedValue))")
+    }
+
+    private var countName: String {
+        switch label {
+        case "B": "볼"
+        case "S": "스트라이크"
+        default: "아웃"
         }
     }
 
@@ -2459,7 +2480,7 @@ private struct DetailMessageCard: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(appModel.favoriteStadiumPalette?.primary ?? KBOLivePalette.primary)
+                .foregroundStyle(appModel.favoriteStadiumPalette?.tint ?? KBOLivePalette.primary)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {

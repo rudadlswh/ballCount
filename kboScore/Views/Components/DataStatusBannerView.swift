@@ -22,7 +22,7 @@ struct DataStatusBannerView: View {
         HStack(spacing: 8) {
             Image(systemName: "clock.badge.exclamationmark")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(palette?.secondary ?? KBOLivePalette.primary)
+                .foregroundStyle(palette?.secondaryTint ?? KBOLivePalette.primary)
 
             Text(message)
                 .font(.caption.weight(.medium))

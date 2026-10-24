@@ -20,6 +20,7 @@ enum GameCardLiveColorStyle {
 // GameCardView 구조체는 화면에 표시되는 SwiftUI 뷰 구성을 담당합니다.
 struct GameCardView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let summary: GameSummary
     let showsHomeTeamBadge: Bool
     let liveColorStyle: GameCardLiveColorStyle
@@ -36,11 +37,22 @@ struct GameCardView: View {
     }
 
     var body: some View {
-        if let palette = appModel.favoriteStadiumPalette {
-            stadiumBody(palette)
-        } else {
-            defaultBody
+        Group {
+            if let palette = appModel.favoriteStadiumPalette {
+                stadiumBody(palette)
+            } else {
+                defaultBody
+            }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(HomeHeroGamePresentation.accessibilityLabel(for: summary))
+        .accessibilityHint("경기 상세 정보를 엽니다")
+    }
+
+    private var scoreLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
     }
 
     private var defaultBody: some View {
@@ -65,7 +77,7 @@ struct GameCardView: View {
                     .shadow(color: liveTextShadowColor, radius: 1, y: 1)
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            scoreLayout {
                 VStack(alignment: .leading, spacing: 8) {
                     TeamRowDefault(
                         team: summary.awayTeam,
@@ -80,7 +92,7 @@ struct GameCardView: View {
                     )
                 }
 
-                Spacer(minLength: 6)
+                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 6) }
 
                 metadataColumn(
                     scoreFontSize: 30,
@@ -123,7 +135,7 @@ struct GameCardView: View {
                     .foregroundStyle(summary.status.isLiveLike ? statusTintColor : palette.textSecondary)
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            scoreLayout {
                 VStack(alignment: .leading, spacing: 8) {
                     TeamRowDoosan(
                         team: summary.awayTeam,
@@ -142,7 +154,7 @@ struct GameCardView: View {
                     )
                 }
 
-                Spacer(minLength: 6)
+                if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 6) }
 
                 metadataColumn(
                     scoreFontSize: 32,
@@ -164,7 +176,7 @@ struct GameCardView: View {
     @ViewBuilder
     private func myTeamBadge(foregroundColor: Color, backgroundColor: Color) -> some View {
         if summary.isMyTeamGame {
-            Text("MY")
+            Text("응원 팀")
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(foregroundColor)
                 .padding(.horizontal, 8)
@@ -186,7 +198,7 @@ struct GameCardView: View {
         VStack(alignment: .trailing, spacing: 6) {
             if summary.showsLiveOrFinalScore {
                 Text(summary.displayScore)
-                    .font(.system(size: scoreFontSize, weight: scoreWeight, design: .rounded))
+                    .font(.largeTitle.weight(scoreWeight))
                     .monospacedDigit()
                     .foregroundStyle(scoreColor)
                     .shadow(color: showsScoreShadow ? liveTextShadowColor : .clear, radius: 1, y: 1)
@@ -194,12 +206,12 @@ struct GameCardView: View {
             Label(summary.venue, systemImage: "mappin.and.ellipse")
                 .font(.caption2)
                 .foregroundStyle(secondaryColor)
-                .lineLimit(1)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
             if let currentPitcher = summary.currentPitcherName?.nilIfBlank, summary.status.isLiveLike {
                 Label(currentPitcher, systemImage: "figure.baseball")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(secondaryColor)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
             }
         }
     }
@@ -215,7 +227,7 @@ struct GameCardView: View {
                 Text(recentEvent)
                     .font(.footnote.weight(summary.status.isLiveLike ? .semibold : .regular))
                     .foregroundStyle(textColor)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -294,7 +306,7 @@ private struct TeamRowDefault: View {
             HStack(spacing: 4) {
                 Text(team.displayName)
                     .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .layoutPriority(1)
 
                 if showsHomeBadge {
@@ -323,13 +335,13 @@ private struct TeamRowDoosan: View {
     var body: some View {
         HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 1, style: .continuous)
-                .fill(isWinningRow ? palette.secondary : Color.clear)
+                .fill(isWinningRow ? StadiumPalette.app.tint : Color.clear)
                 .frame(width: 2, height: 24)
             HStack(spacing: 4) {
                 Text(team.displayName)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(isWinningRow ? palette.textPrimary : palette.textSecondary)
-                    .lineLimit(1)
+                    .foregroundStyle(StadiumPalette.app.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .layoutPriority(1)
 
                 if showsHomeBadge {

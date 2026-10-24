@@ -26,13 +26,8 @@ struct StatusBadge: View {
     }
 
     var body: some View {
-        let palette = appModel.favoriteStadiumPalette
-        let resolvedTintColor = tintColor ?? (palette == nil ? status.tintColor : Color.white)
-        let resolvedBackground = backgroundColor ?? (
-            palette != nil
-                ? (tintColor == nil ? palette!.statusRed : status.stadiumTintColor(palette!).opacity(0.24))
-                : resolvedTintColor.opacity(0.12)
-        )
+        let resolvedTintColor = tintColor ?? status.tintColor
+        let resolvedBackground = backgroundColor ?? resolvedTintColor.opacity(0.12)
 
         Text(status.title)
             .font(.caption.weight(.bold))
