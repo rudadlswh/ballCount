@@ -547,7 +547,9 @@ enum KBOExternalResponseAdapter {
         let scheduledStart = combineDate(dateText: gameLink.gameDate, timeText: timeText) ?? .distantPast
         let venueIndex = max(cells.count - 2, 0)
         let venueText = (element(at: venueIndex, in: cells) as? [String: Any]).flatMap { strippedHTML(from: stringValue(for: ["Text"], in: $0)) }
-        let isFinal = teamsAndScores.awayScore != nil && teamsAndScores.homeScore != nil
+        let hasScores = teamsAndScores.awayScore != nil && teamsAndScores.homeScore != nil
+        // Scores alone can be live; only a review link confirms the final result.
+        let isFinal = hasScores && (relayHTML?.lowercased().contains("section=review") == true)
 
         let game = KBOGameDTO(
             id: GameIdentifier.uuid(from: gameLink.gameID) ?? UUID(),
@@ -558,8 +560,8 @@ enum KBOExternalResponseAdapter {
             homeTeamID: homeTeam.id,
             awayScore: teamsAndScores.awayScore,
             homeScore: teamsAndScores.homeScore,
-            statusCode: isFinal ? "FINAL" : "UPCOMING",
-            statusText: isFinal ? "경기 종료" : "경기 예정",
+            statusCode: isFinal ? "FINAL" : (hasScores ? "LIVE" : "UPCOMING"),
+            statusText: isFinal ? "경기 종료" : (hasScores ? "경기 중" : "경기 예정"),
             inningText: nil,
             bases: nil,
             outs: nil,
@@ -934,7 +936,7 @@ enum KBOExternalResponseAdapter {
             return nil
         }
 
-        let scores = matches(in: html, pattern: "<span class=\\\"(?:win|lose)\\\">(\\d+)</span>")
+        let scores = matches(in: html, pattern: "<span class=\\\"(?:win|lose|same)\\\">(\\d+)</span>")
             .compactMap { Int($0.1) }
 
         return (

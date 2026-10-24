@@ -756,7 +756,10 @@ final class GameDetailScreenModel {
 
     // waitForDetailLoadForTesting 메서드는 이 타입의 주요 동작을 수행합니다.
     func waitForDetailLoadForTesting() async {
-        _ = await detailLoadTask?.value
+        while let task = detailLoadTask {
+            _ = await task.value
+            await Task.yield()
+        }
     }
 
     // waitForDatabaseRecordLoadForTesting 메서드는 이 타입의 주요 동작을 수행합니다.

@@ -31,6 +31,25 @@ struct ScheduleMonthCacheEntry: Sendable {
 
 // SchedulePresentation 구조체는 SchedulePresentation 타입의 역할과 값을 정의합니다.
 struct SchedulePresentation: Sendable {
+    nonisolated static func gameBadgeLabel(
+        for game: GameDetail,
+        filter: ScheduleFilter,
+        favoriteTeamID: String?,
+        postseasonGameAliases: Set<String>
+    ) -> String {
+        // Stored schedules may lack a season type; match official postseason fixtures by identity.
+        if game.seasonClassification == .postseason ||
+            !game.gameIdentityAliases.isDisjoint(with: postseasonGameAliases) {
+            return "포스트시즌"
+        }
+        if game.seasonClassification == .exhibitionPreseason { return "시범경기" }
+        if filter == .myTeam, let favoriteTeamID {
+            if game.awayTeam.id == favoriteTeamID { return "원정" }
+            if game.homeTeam.id == favoriteTeamID { return "홈" }
+        }
+        return "리그"
+    }
+
     let calendarDays: [MyTeamCalendarDay]
     let selectedDateGames: [GameDetail]
     let isDisplayedMonthAvailable: Bool

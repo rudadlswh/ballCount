@@ -11,7 +11,7 @@
 
 import Foundation
 
-protocol ScheduleStaleGameReconciliationClient: Sendable {
+nonisolated protocol ScheduleStaleGameReconciliationClient: Sendable {
     // reconcileStaleGames 메서드는 이 타입의 주요 동작을 수행합니다.
     func reconcileStaleGames(dates: [String]) async throws
 }

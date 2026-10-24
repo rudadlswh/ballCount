@@ -105,6 +105,8 @@ nonisolated struct SupabaseGameRow: Codable, Sendable {
     let officialProviderGameID: String?
     let homeStartingPitcherName: String?
     let awayStartingPitcherName: String?
+    let seasonType: String?
+    let seriesID: Int?
 
 // CodingKeys 열거형는 Codable 변환에 사용하는 키를 정의합니다.
     private enum CodingKeys: String, CodingKey {
@@ -132,6 +134,8 @@ nonisolated struct SupabaseGameRow: Codable, Sendable {
         case officialProviderGameID = "official_provider_game_id"
         case homeStartingPitcherName = "home_starting_pitcher_name"
         case awayStartingPitcherName = "away_starting_pitcher_name"
+        case seasonType = "season_type"
+        case seriesID = "series_id"
     }
 
     // 이 초기화 메서드는 인스턴스 생성에 필요한 값을 설정합니다.
@@ -166,6 +170,8 @@ nonisolated struct SupabaseGameRow: Codable, Sendable {
         officialProviderGameID = try container.decodeIfPresent(String.self, forKey: .officialProviderGameID)
         homeStartingPitcherName = try container.decodeIfPresent(String.self, forKey: .homeStartingPitcherName)
         awayStartingPitcherName = try container.decodeIfPresent(String.self, forKey: .awayStartingPitcherName)
+        seasonType = try container.decodeIfPresent(String.self, forKey: .seasonType)
+        seriesID = try container.decodeIfPresent(Int.self, forKey: .seriesID)
     }
 }
 
@@ -1090,6 +1096,19 @@ nonisolated enum SupabaseKBOMapper {
         for row: SupabaseGameRow,
         providerGameID: String?
     ) -> GameSeasonClassification {
+        if let seasonType = row.seasonType, seasonType != "unknown" {
+            return GameSeasonClassification(rawValue: seasonType) ?? .unknown
+        }
+        if let seriesID = row.seriesID {
+            return switch seriesID {
+            case 0: .regularSeason
+            case 3, 4, 5, 7: .postseason
+            case 9: .exhibitionPreseason
+            default: .unknown
+            }
+        }
+
+        // shortcut: unknown rows retain legacy provider inference until stored classifications are complete.
         let searchableText = [
             providerGameID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             row.publicGameID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),

@@ -8,7 +8,7 @@
 
 import Foundation
 
-protocol AttendanceClient: Sendable {
+nonisolated protocol AttendanceClient: Sendable {
     nonisolated func fetchAttendedGameIDs(installationID: UUID) async throws -> Set<UUID>
     nonisolated func fetchAttendanceRecords(installationID: UUID) async throws -> AttendanceRecords
     nonisolated func setAttendance(

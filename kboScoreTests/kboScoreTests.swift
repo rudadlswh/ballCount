@@ -15,6 +15,7 @@ import UserNotifications
 @testable import kboScore
 
 // kboScoreTests 구조체는 kboScoreTests 타입의 역할과 값을 정의합니다.
+@Suite(.serialized)
 @MainActor
 struct kboScoreTests {
 
@@ -145,7 +146,7 @@ struct kboScoreTests {
             homeTeam: homeTeam,
             awayScore: 2,
             homeScore: 3,
-            status: .final,
+            status: .live,
             inningText: "Top 3",
             recentEvent: nil,
             isMyTeamGame: false,
@@ -318,7 +319,7 @@ struct kboScoreTests {
 
         let match = try #require(SelectedGameResolver.match(for: "public:chain-public", in: [scheduledShell, bridge, officialFinal]))
 
-        #expect(match.reason == "publicGameID")
+        #expect(match.reason == "publicStableIdentity")
         #expect(match.game.status == .final)
         #expect(match.game.awayScore == 7)
         #expect(match.game.providerGameID == "chain-provider")
@@ -371,6 +372,130 @@ struct kboScoreTests {
     }
 
     // homeFavoriteGameRefreshPolicyPreservesRecentRefreshThrottle 메서드는 이 타입의 주요 동작을 수행합니다.
+    @Test func homeAutomaticRefreshUpdatesScoreAndStopsAfterFinal() async throws {
+        var now = isoDate("2026-10-15T19:00:00+09:00")
+        let source = HomeRefreshTestSource(games: [homeRefreshGame(now: now)])
+        let model = homeRefreshModel(source: source, now: { now })
+        await model.refreshHomeAutomatically()
+        await model.refreshHomeAutomatically()
+        #expect(source.requests.count == 1)
+
+        now += 30
+        source.games = [homeRefreshGame(now: now, score: 5)]
+        await model.refreshHomeAutomatically()
+        #expect(model.filteredHomeGames.first?.homeScore == 5)
+        #expect(model.filteredHomeGames.first?.inningText == "5회 말")
+        #expect(source.requests.count == 2)
+        #expect(source.requests.allSatisfy { $0.bypassingCache })
+
+        now += 30
+        source.games = [homeRefreshGame(now: now, status: .final, score: 5)]
+        await model.refreshHomeAutomatically()
+        now += 30
+        await model.refreshHomeAutomatically()
+        #expect(model.filteredHomeGames.first?.status == .final)
+        #expect(source.requests.count == 3)
+    }
+
+    @Test func homeAutomaticRefreshStartsAtScheduledTimeAndRetriesFailure() async {
+        var now = isoDate("2026-10-15T17:59:00+09:00")
+        let source = HomeRefreshTestSource(games: [homeRefreshGame(now: now, status: .upcoming)])
+        let model = homeRefreshModel(source: source, now: { now })
+        await model.refreshHomeAutomatically()
+        now += 30
+        await model.refreshHomeAutomatically()
+        #expect(source.requests.count == 1)
+        now += 30
+        source.shouldFail = true
+        await model.refreshHomeAutomatically()
+        #expect(source.requests.count == 2)
+        #expect(model.filteredHomeGames.first?.status == .upcoming)
+        source.shouldFail = false
+        source.games = [homeRefreshGame(now: now, score: 2)]
+        now += 30
+        await model.refreshHomeAutomatically()
+        #expect(source.requests.count == 3)
+        #expect(model.filteredHomeGames.first?.homeScore == 2)
+    }
+
+    @Test func homeAutomaticRefreshSkipsOtherTabsAndCancelledTasks() async {
+        let now = isoDate("2026-10-15T19:00:00+09:00")
+        let source = HomeRefreshTestSource(games: [homeRefreshGame(now: now)])
+        let model = homeRefreshModel(source: source, now: { now })
+        model.selectedTab = .schedule
+        await model.refreshHomeAutomatically()
+        model.selectedTab = .home
+        let cancelled = Task { await model.refreshHomeAutomatically() }
+        cancelled.cancel()
+        await cancelled.value
+        #expect(source.requests.isEmpty)
+        await model.refreshHomeAutomatically()
+        #expect(source.requests.count == 1)
+    }
+
+    @Test func homeAutomaticRefreshSharesInFlightRequest() async throws {
+        let now = isoDate("2026-10-15T19:00:00+09:00")
+        let source = HomeRefreshTestSource(games: [homeRefreshGame(now: now)])
+        source.holdNextRequest = true
+        let model = homeRefreshModel(source: source, now: { now })
+        let first = Task { await model.refreshHomeAutomatically() }
+        defer { source.release(); first.cancel() }
+        let started = await eventually(timeout: 1, interval: 10_000_000) { source.heldRequest != nil }
+        try #require(started)
+        let second = Task { await model.refreshHomeAutomatically() }
+        await Task.yield()
+        source.release()
+        await first.value
+        await second.value
+        #expect(source.requests.count == 1)
+    }
+
+    @Test(arguments: [true, false])
+    func homeAutomaticRefreshRejectsResponseAfterTeamOrDayChanges(changeTeam: Bool) async throws {
+        var now = isoDate("2026-10-15T19:00:00+09:00")
+        let source = HomeRefreshTestSource(games: [homeRefreshGame(now: now)])
+        source.holdNextRequest = true
+        let model = homeRefreshModel(source: source, now: { now })
+        let old = Task { await model.refreshHomeAutomatically() }
+        defer { source.release(); old.cancel() }
+        let started = await eventually(timeout: 1, interval: 10_000_000) { source.heldRequest != nil }
+        try #require(started)
+        if changeTeam { model.settings.favoriteTeamID = "kia" } else { now += 86400 }
+        source.release()
+        await old.value
+        #expect(model.homeFavoriteTeamGames.isEmpty)
+        source.games = []
+        await model.refreshHomeAutomatically()
+        #expect(source.requests.count == 2)
+        #expect(source.requests.last?.teamID == (changeTeam ? "kia" : "lg"))
+        #expect(source.requests.last?.date == now)
+    }
+
+    private func homeRefreshModel(source: HomeRefreshTestSource, now: @escaping () -> Date) -> AppModel {
+        AppModel(
+            repository: FavoriteScheduleStubRepository(base: StubRepository(), fetchFavoriteTeamSchedule: {
+                try await source.fetch(date: $0, teamID: $1, bypassingCache: $2)
+            }),
+            liveActivityController: TestLiveActivityController(isSupported: false),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: source.games, notifications: [], settings: .default),
+            usePersistedSettings: false,
+            currentDateProvider: now
+        )
+    }
+
+    private func homeRefreshGame(now: Date, status: GameStatus = .live, score: Int = 1) -> GameDetail {
+        let teams = MockKBOData.makeBootstrap().teams
+        return makeGameDetail(
+            id: UUID(uuidString: "E0532483-5CCD-40A2-9E65-31C9B1D5788B")!,
+            scheduledStart: isoDate("2026-10-15T18:00:00+09:00"),
+            venue: "잠실", awayTeam: teams.first { $0.id == "kia" }!, homeTeam: teams.first { $0.id == "lg" }!,
+            awayScore: status == .upcoming ? nil : 0, homeScore: status == .upcoming ? nil : score,
+            status: status, seasonClassification: .regularSeason,
+            inningText: status == .live ? "\(score)회 말" : nil,
+            note: "provider_game_id=20261015HTLG0 updated_at=\(now.ISO8601Format())"
+        )
+    }
+
     @Test func homeFavoriteGameRefreshPolicyPreservesRecentRefreshThrottle() throws {
         let now = isoDate("2026-06-09T12:00:00+09:00")
         let recentRefresh = now.addingTimeInterval(-14)
@@ -451,7 +576,7 @@ struct kboScoreTests {
             now: now
         ) == false)
         #expect(LiveActivityAutoStartEligibility.isEligibleForAutomaticLiveActivityStart(
-            status: .final,
+            status: .live,
             scheduledAt: isoDate("2026-06-25T18:30:00+09:00"),
             now: now
         ) == true)
@@ -555,11 +680,13 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: repository,
+            bootstrap: try await repository.fetchBootstrapData(),
             usePersistedSettings: false,
             currentDateProvider: { referenceDate }
         )
 
-        await model.loadIfNeeded()
+        model.settings.favoriteTeamID = "lotte"
+        await model.refreshHome()
 
         let summary = try #require(model.filteredHomeGames.first)
         #expect(summary.awayStartingPitcherName == "알칸타라")
@@ -608,11 +735,13 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: repository,
+            bootstrap: try await repository.fetchBootstrapData(),
             usePersistedSettings: false,
             currentDateProvider: { referenceDate }
         )
 
-        await model.loadIfNeeded()
+        model.settings.favoriteTeamID = "lotte"
+        await model.refreshHome()
 
         let summary = try #require(model.filteredHomeGames.first)
         #expect(summary.status == .live)
@@ -662,11 +791,13 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: repository,
+            bootstrap: try await repository.fetchBootstrapData(),
             usePersistedSettings: false,
             currentDateProvider: { referenceDate }
         )
 
-        await model.loadIfNeeded()
+        model.settings.favoriteTeamID = "lotte"
+        await model.refreshHome()
         let summary = try #require(model.filteredHomeGames.first)
 
         #expect(model.games.count == 1)
@@ -716,11 +847,13 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: repository,
+            bootstrap: try await repository.fetchBootstrapData(),
             usePersistedSettings: false,
             currentDateProvider: { referenceDate }
         )
 
-        await model.loadIfNeeded()
+        model.settings.favoriteTeamID = "lotte"
+        await model.refreshHome()
         await model.loadScheduleIfNeeded(for: referenceDate)
         let game = try #require(model.scheduleGames(on: referenceDate, filter: .all).first)
 
@@ -1412,10 +1545,10 @@ struct kboScoreTests {
         #expect(fallbackDisplay.runners.second == "주자")
         #expect(fallbackDisplay.runners.third == "주자")
         #expect(presentation.displayBaseRunners == [
-            BaseRunnerDisplayItem(base: "2B", name: "점유"),
-            BaseRunnerDisplayItem(base: "3B", name: "점유")
+            BaseRunnerDisplayItem(base: "2B", name: "김주원"),
+            BaseRunnerDisplayItem(base: "3B", name: "최정원")
         ])
-        #expect(presentation.baseRunnerDisplay.source == "latestSnapshotOnly")
+        #expect(presentation.baseRunnerDisplay.source == "latestSnapshotWithOfficialNames")
     }
 
     // gameDetailBaseSituationOfficialMappedAdvanceDoesNotReuseLowerBaseCache 메서드는 live 주자상황에서 cache/official 이름을 재사용하지 않는지 검증합니다.
@@ -1447,17 +1580,17 @@ struct kboScoreTests {
         )
 
         #expect(presentation.displayBaseRunners == [
-            BaseRunnerDisplayItem(base: "2B", name: "점유"),
-            BaseRunnerDisplayItem(base: "3B", name: "점유")
+            BaseRunnerDisplayItem(base: "2B", name: "레이예스"),
+            BaseRunnerDisplayItem(base: "3B", name: "고승민")
         ])
         #expect(presentation.displayBaseRunners != [
             BaseRunnerDisplayItem(base: "2B", name: "고승민"),
             BaseRunnerDisplayItem(base: "3B", name: "고승민")
         ])
         #expect(presentation.baseRunnerDisplay.runners.first == nil)
-        #expect(presentation.baseRunnerDisplay.runners.second == nil)
-        #expect(presentation.baseRunnerDisplay.runners.third == nil)
-        #expect(presentation.baseRunnerDisplay.source == "latestSnapshotOnly")
+        #expect(presentation.baseRunnerDisplay.runners.second == "레이예스")
+        #expect(presentation.baseRunnerDisplay.runners.third == "고승민")
+        #expect(presentation.baseRunnerDisplay.source == "latestSnapshotWithOfficialNames")
     }
 
     // gameDetailBaseSituationDoesNotHideCurrentBatterOrPitcher 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -1936,7 +2069,7 @@ struct kboScoreTests {
         #expect(selected.status == .final)
         #expect(selected.awayScore == 6)
         #expect(selected.homeScore == 4)
-        #expect(selected.providerGameID == officialProviderID)
+        #expect(selected.officialProviderGameID == officialProviderID)
     }
 
     // gameLookupDoesNotChooseAmbiguousSamePriorityProviderMatch 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -2435,7 +2568,9 @@ struct kboScoreTests {
             "status_reason",
             "final_confirmed_at",
             "live_last_checked_at",
-            "official_provider_game_id"
+            "official_provider_game_id",
+            "season_type",
+            "series_id"
         ]
 
         #expect(columns.contains("stadium_code") == false)
@@ -2568,6 +2703,7 @@ struct kboScoreTests {
             currentDateProvider: { referenceDate }
         )
 
+        model.settings.favoriteTeamID = "lotte"
         await model.loadIfNeeded()
         let game = try #require(model.filteredHomeGames.first)
 
@@ -2674,7 +2810,8 @@ struct kboScoreTests {
             gameID: rowID,
             inningLabel: "1회 초",
             currentPitcherName: "롯데투수",
-            currentBatterName: "NC타자"
+            currentBatterName: "NC타자",
+            createdAt: "2026-06-24T18:35:00+09:00"
         )
         let tracker = DetailFetchTracker()
         let repository = SupabaseBackedKBORepository(
@@ -2979,7 +3116,7 @@ struct kboScoreTests {
 
     // scheduleFilterAllIncludesWholeMonthGames 메서드는 비동기 작업이나 시스템 연동 흐름을 제어합니다.
     @Test func scheduleFilterAllIncludesWholeMonthGames() async throws {
-        let model = AppModel(bootstrap: MockKBOData.makeBootstrap(), usePersistedSettings: false)
+        let model = AppModel(bootstrap: MockKBOData.makeBootstrap(now: isoDate("2026-03-23T13:00:00+09:00")), usePersistedSettings: false)
         let sampleDate = isoDate("2026-03-23T13:00:00+09:00")
 
         let games = model.scheduleGames(on: sampleDate, filter: .all)
@@ -2991,7 +3128,7 @@ struct kboScoreTests {
 
     // scheduleFilterMyTeamOnlyReturnsFavoriteTeamGames 메서드는 비동기 작업이나 시스템 연동 흐름을 제어합니다.
     @Test func scheduleFilterMyTeamOnlyReturnsFavoriteTeamGames() async throws {
-        let model = AppModel(bootstrap: MockKBOData.makeBootstrap(), usePersistedSettings: false)
+        let model = AppModel(bootstrap: MockKBOData.makeBootstrap(now: isoDate("2026-03-23T13:00:00+09:00")), usePersistedSettings: false)
         model.settings.favoriteTeamID = "lg"
         let sampleDate = isoDate("2026-03-23T13:00:00+09:00")
 
@@ -3413,7 +3550,7 @@ struct kboScoreTests {
         let samsung = try #require(base.teams.first(where: { $0.id == "samsung" }))
 
         let completedWin = makeGameDetail(
-            id: UUID(uuidString: "93000000-0000-0000-0000-000000000001")!,
+            id: UUID(uuidString: "93000000-0000-4000-0000-000000000001")!,
             scheduledStart: isoDate("2026-04-01T18:30:00+09:00"),
             venue: "잠실",
             awayTeam: doosan,
@@ -3424,7 +3561,7 @@ struct kboScoreTests {
             seasonClassification: .regularSeason
         )
         let completedLoss = makeGameDetail(
-            id: UUID(uuidString: "93000000-0000-0000-0000-000000000002")!,
+            id: UUID(uuidString: "93000000-0000-4000-0000-000000000002")!,
             scheduledStart: isoDate("2026-04-02T18:30:00+09:00"),
             venue: "잠실",
             awayTeam: samsung,
@@ -3435,7 +3572,7 @@ struct kboScoreTests {
             seasonClassification: .regularSeason
         )
         let completedTie = makeGameDetail(
-            id: UUID(uuidString: "93000000-0000-0000-0000-000000000003")!,
+            id: UUID(uuidString: "93000000-0000-4000-0000-000000000003")!,
             scheduledStart: isoDate("2026-04-03T18:30:00+09:00"),
             venue: "잠실",
             awayTeam: doosan,
@@ -3446,7 +3583,7 @@ struct kboScoreTests {
             seasonClassification: .regularSeason
         )
         let upcoming = makeGameDetail(
-            id: UUID(uuidString: "93000000-0000-0000-0000-000000000004")!,
+            id: UUID(uuidString: "93000000-0000-4000-0000-000000000004")!,
             scheduledStart: isoDate("2026-04-04T18:30:00+09:00"),
             venue: "잠실",
             awayTeam: doosan,
@@ -3457,7 +3594,7 @@ struct kboScoreTests {
             seasonClassification: .regularSeason
         )
         let cancelled = makeGameDetail(
-            id: UUID(uuidString: "93000000-0000-0000-0000-000000000005")!,
+            id: UUID(uuidString: "93000000-0000-4000-0000-000000000005")!,
             scheduledStart: isoDate("2026-04-05T18:30:00+09:00"),
             venue: "잠실",
             awayTeam: samsung,
@@ -3469,6 +3606,7 @@ struct kboScoreTests {
         )
 
         let model = AppModel(
+            attendanceClient: RecordingAttendanceClient(),
             bootstrap: KBOBootstrapData(
                 teams: [lg, doosan, samsung],
                 games: [completedWin, completedLoss, completedTie, upcoming, cancelled],
@@ -3483,6 +3621,9 @@ struct kboScoreTests {
             model.toggleGameAttendance(for: $0)
         }
 
+        try #require(await eventually {
+            [completedWin, completedLoss, completedTie, upcoming, cancelled].allSatisfy { !model.isAttendanceSyncPending(for: $0) }
+        })
         let summary = model.myTeamAttendanceSummary
         #expect(summary.completedGames == 3)
         #expect(summary.wins == 1)
@@ -3492,6 +3633,7 @@ struct kboScoreTests {
         #expect(summary.winPercentageText == "0.500")
 
         model.toggleGameAttendance(for: completedWin)
+        try #require(await eventually { !model.isAttendanceSyncPending(for: completedWin) })
         #expect(model.isGameAttended(completedWin) == false)
         #expect(model.myTeamAttendanceSummary.completedGames == 2)
     }
@@ -3695,6 +3837,7 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: StubRepository(fetchMonthlySchedule: { _ in [staleMonthlyGame] }),
+            attendanceClient: RecordingAttendanceClient(),
             bootstrap: KBOBootstrapData(
                 teams: [kt, hanwha],
                 games: [bootstrapGame],
@@ -3706,6 +3849,7 @@ struct kboScoreTests {
         model.settings.favoriteTeamID = "hanwha"
 
         model.toggleGameAttendance(for: bootstrapGame)
+        try #require(await eventually { !model.isAttendanceSyncPending(for: bootstrapGame) })
         #expect(model.myTeamAttendanceSummary.completedGames == 1)
         #expect(model.myTeamAttendanceSummary.losses == 1)
 
@@ -3723,7 +3867,7 @@ struct kboScoreTests {
         let doosan = try #require(base.teams.first(where: { $0.id == "doosan" }))
         let referenceDate = isoDate("2026-04-01T18:30:00+09:00")
         let attendedGame = makeGameDetail(
-            id: UUID(uuidString: "94000000-0000-0000-0000-000000000001")!,
+            id: UUID(uuidString: "94000000-0000-4000-0000-000000000001")!,
             scheduledStart: referenceDate,
             venue: "잠실",
             awayTeam: doosan,
@@ -3734,6 +3878,7 @@ struct kboScoreTests {
             seasonClassification: .regularSeason
         )
         let model = AppModel(
+            attendanceClient: RecordingAttendanceClient(),
             bootstrap: KBOBootstrapData(
                 teams: [lg, doosan],
                 games: [attendedGame],
@@ -3744,6 +3889,7 @@ struct kboScoreTests {
         )
 
         model.toggleGameAttendance(for: attendedGame)
+        try #require(await eventually { !model.isAttendanceSyncPending(for: attendedGame) })
 
         let calendar = Calendar(identifier: .gregorian)
         let matchingDay = model.scheduleCalendarDays(for: referenceDate, filter: .all).first {
@@ -3787,6 +3933,7 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: StubRepository(fetchMonthlySchedule: { _ in [monthlyGame] }),
+            attendanceClient: RecordingAttendanceClient(),
             bootstrap: KBOBootstrapData(
                 teams: [kt, hanwha],
                 games: [bootstrapGame],
@@ -3798,6 +3945,7 @@ struct kboScoreTests {
         model.settings.favoriteTeamID = "hanwha"
 
         model.toggleGameAttendance(for: bootstrapGame)
+        try #require(await eventually { !model.isAttendanceSyncPending(for: bootstrapGame) })
         await model.loadScheduleIfNeeded(for: scheduledStart)
 
         let calendar = Calendar(identifier: .gregorian)
@@ -3810,6 +3958,7 @@ struct kboScoreTests {
         #expect(day.hasAttendedGame)
 
         model.toggleGameAttendance(for: bootstrapGame)
+        try #require(await eventually { !model.isAttendanceSyncPending(for: bootstrapGame) })
         #expect(model.isGameAttended(monthlyGame) == false)
         let dayAfterUnmark = try #require(model.scheduleCalendarDays(for: scheduledStart, filter: .all).first {
             calendar.isDate($0.date, inSameDayAs: scheduledStart)
@@ -3850,6 +3999,7 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: StubRepository(fetchMonthlySchedule: { _ in [monthlyGame] }),
+            attendanceClient: RecordingAttendanceClient(),
             bootstrap: KBOBootstrapData(
                 teams: [kt, hanwha],
                 games: [bootstrapGame],
@@ -3861,6 +4011,7 @@ struct kboScoreTests {
         model.settings.favoriteTeamID = "hanwha"
 
         model.toggleGameAttendance(for: bootstrapGame)
+        try #require(await eventually { !model.isAttendanceSyncPending(for: bootstrapGame) })
         await model.loadScheduleIfNeeded(for: scheduledStart)
 
         let selectedGames = model.scheduleGames(on: scheduledStart, filter: .all)
@@ -7210,8 +7361,8 @@ struct kboScoreTests {
         #expect(snapshot.favoriteTeamShortName == "LG")
         #expect(snapshot.opponentTeamShortName == "키움")
         #expect(snapshot.isHomeGame == true)
-        #expect(snapshot.favoriteScoreText == "4")
-        #expect(snapshot.opponentScoreText == "3")
+        #expect(snapshot.favoriteScoreText == "7")
+        #expect(snapshot.opponentScoreText == "8")
         #expect(snapshot.inningText.contains("회"))
     }
 
@@ -7229,8 +7380,8 @@ struct kboScoreTests {
         #expect(attributes.favoriteTeamID == "lg")
         #expect(attributes.opponentTeamID == "kiwoom")
         #expect(attributes.isHomeGame == true)
-        #expect(contentState.favoriteScoreText == "4")
-        #expect(contentState.opponentScoreText == "3")
+        #expect(contentState.favoriteScoreText == "7")
+        #expect(contentState.opponentScoreText == "8")
         #expect(contentState.summaryText == game.status.title)
         #else
         Issue.record("ActivityKit unavailable in this test environment")
@@ -8246,7 +8397,7 @@ struct kboScoreTests {
         let session = makeStubSession()
         let repository = LiveKBORepository(baseURL: URL(string: "https://example.com/api/")!, session: session)
         URLProtocolStub.testResponses = [
-            "https://example.com/api/v1/schedule/month?year=2026&month=3": StubResponse(statusCode: 200, data: officialSchedule)
+            "https://example.com/api/v1/games/month?year=2026&month=3": StubResponse(statusCode: 200, data: officialSchedule)
         ]
         defer { URLProtocolStub.testResponses = [:] }
 
@@ -8288,7 +8439,7 @@ struct kboScoreTests {
         let session = makeStubSession()
         let repository = LiveKBORepository(baseURL: URL(string: "https://example.com/api/")!, session: session)
         URLProtocolStub.testResponses = [
-            "https://example.com/api/v1/schedule/month?year=2026&month=4": StubResponse(statusCode: 200, data: payload)
+            "https://example.com/api/v1/games/month?year=2026&month=4": StubResponse(statusCode: 200, data: payload)
         ]
         defer { URLProtocolStub.testResponses = [:] }
 
@@ -8320,7 +8471,7 @@ struct kboScoreTests {
                 {"detail":"Not Found"}
                 """.data(using: .utf8)!
             ),
-            "https://example.com/api/v1/schedule/month?year=\(month.year)&month=\(month.month)": StubResponse(
+            "https://example.com/api/v1/games/month?year=\(month.year)&month=\(month.month)": StubResponse(
                 statusCode: 200,
                 data: backendMonthlyPayload
             )
@@ -10544,7 +10695,7 @@ struct kboScoreTests {
     // liveRepositoryMapsBackendStandingsPayload 메서드는 이 타입의 주요 동작을 수행합니다.
     @Test func liveRepositoryMapsBackendStandingsPayload() async throws {
         let session = makeStubSession()
-        let repository = LiveKBORepository(baseURL: URL(string: "https://example.com/v1/")!, session: session)
+        let repository = LiveKBORepository(baseURL: URL(string: "https://example.com/")!, session: session)
         let standingsPayload = """
         {
           "seasonId": 2026,
@@ -10601,7 +10752,7 @@ struct kboScoreTests {
     // liveRepositoryMapsBackendStandingsUnavailableProbabilityState 메서드는 이 타입의 주요 동작을 수행합니다.
     @Test func liveRepositoryMapsBackendStandingsUnavailableProbabilityState() async throws {
         let session = makeStubSession()
-        let repository = LiveKBORepository(baseURL: URL(string: "https://example.com/v1/")!, session: session)
+        let repository = LiveKBORepository(baseURL: URL(string: "https://example.com/")!, session: session)
         let standingsPayload = """
         {
           "seasonId": 2026,
@@ -10749,7 +10900,7 @@ struct kboScoreTests {
         let bootstrap = try await repository.fetchBootstrapData()
         let snapshot = await runtimeState.snapshot()
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "번들 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "번들 LG")
         #expect(await tracker.bootstrapFetchCount == 1)
         #expect(await tracker.monthlyScheduleFetchCount == 0)
         #expect(snapshot.deliverySource == .mockFallback)
@@ -10843,7 +10994,7 @@ struct kboScoreTests {
         let bootstrap = try await repository.fetchBootstrapData()
         let snapshot = await runtimeState.snapshot()
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "문서 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "문서 LG")
         #expect(snapshot.localBootstrapSource == .documents)
         #expect(snapshot.localBootstrapMessage == nil)
         #expect(snapshot.localBootstrapResolvedPath == documentsURL.path)
@@ -10872,7 +11023,7 @@ struct kboScoreTests {
         let bootstrap = try await repository.fetchBootstrapData()
         let snapshot = await runtimeState.snapshot()
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "번들 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "번들 LG")
         #expect(snapshot.localBootstrapSource == .bundled)
         #expect(snapshot.localBootstrapMessage == nil)
         #expect(snapshot.localBootstrapResolvedPath == bundledURL.path)
@@ -10903,7 +11054,7 @@ struct kboScoreTests {
         let bootstrap = try await repository.fetchBootstrapData()
         let snapshot = await runtimeState.snapshot()
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "번들 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "번들 LG")
         #expect(snapshot.localBootstrapSource == .bundled)
         #expect(snapshot.localBootstrapMessage?.contains(documentsURL.path) == true)
         #expect(snapshot.localBootstrapResolvedPath == bundledURL.path)
@@ -10990,11 +11141,12 @@ struct kboScoreTests {
         let model = AppModel(
             repository: repository,
             repositoryRuntimeState: runtimeState,
-            usePersistedSettings: false
+            usePersistedSettings: false,
+            currentDateProvider: { isoDate("2026-03-28T18:00:00+09:00") }
         )
 
         await model.loadIfNeeded()
-        let targetGameID = try #require(UUID(uuidString: "0aedcdb0-e727-42c9-a7e5-e3c3bad99392"))
+        let targetGameID = try #require(UUID(uuidString: "01000000-0000-0000-0000-000000000001"))
         let initialAwayScore = try #require(model.games.first(where: { $0.id == targetGameID })?.awayScore)
         #expect(initialAwayScore == 1)
 
@@ -11009,7 +11161,7 @@ struct kboScoreTests {
     }
 
     // appModelRefreshHomeReappliesEditedDocumentsBootstrapTeams 메서드는 이 타입의 주요 동작을 수행합니다.
-    @Test func appModelRefreshHomeReappliesEditedDocumentsBootstrapTeams() async throws {
+    @Test func repositoryReReadsEditedDocumentsTeamMetadata() async throws {
         let documentsDirectory = try makeTemporaryDirectory()
         let bundledDirectory = try makeTemporaryDirectory()
         defer {
@@ -11034,16 +11186,17 @@ struct kboScoreTests {
             usePersistedSettings: false
         )
 
-        await model.loadIfNeeded()
-        #expect(model.teams.first(where: { $0.id == "lg" })?.name == "문서 LG")
+        let initial = try await repository.fetchBootstrapData()
+        #expect(initial.teams.first(where: { $0.id == "lg" })?.englishName == "문서 LG")
 
         try makeBootstrapJSON(teamName: "수정 문서 LG").write(to: documentsURL, options: .atomic)
 
-        await model.refreshHome()
+        let updated = try await repository.fetchBootstrapData()
+        let snapshot = await runtimeState.snapshot()
 
-        #expect(model.teams.first(where: { $0.id == "lg" })?.name == "수정 문서 LG")
-        #expect(model.debugLocalBootstrapResolvedPath == documentsURL.path)
-        #expect(model.debugLocalBootstrapLoadedAt != nil)
+        #expect(updated.teams.first(where: { $0.id == "lg" })?.englishName == "수정 문서 LG")
+        #expect(snapshot.localBootstrapResolvedPath == documentsURL.path)
+        #expect(snapshot.localBootstrapLoadedAt != nil)
     }
 
     // bundledJSONRepositoryRecoversAfterInvalidDocumentsJSONIsFixed 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -11068,14 +11221,14 @@ struct kboScoreTests {
         )
 
         let fallbackBootstrap = try await repository.fetchBootstrapData()
-        #expect(fallbackBootstrap.teams.first(where: { $0.id == "lg" })?.name == "번들 LG")
+        #expect(fallbackBootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "번들 LG")
 
         try makeBootstrapJSON(teamName: "복구 문서 LG").write(to: documentsURL, options: .atomic)
 
         let documentsBootstrap = try await repository.fetchBootstrapData()
         let snapshot = await runtimeState.snapshot()
 
-        #expect(documentsBootstrap.teams.first(where: { $0.id == "lg" })?.name == "복구 문서 LG")
+        #expect(documentsBootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "복구 문서 LG")
         #expect(snapshot.localBootstrapSource == .documents)
         #expect(snapshot.localBootstrapMessage == nil)
         #expect(snapshot.localBootstrapResolvedPath == documentsURL.path)
@@ -12052,6 +12205,7 @@ struct kboScoreTests {
         )
 
         await model.load(for: try makeLiveBoxscoreDetailGame())
+        await model.waitForDetailLoadForTesting()
         await model.waitForOfficialFallbackLoadForTesting()
 
         #expect(model.databaseRecordReview == nil)
@@ -12169,6 +12323,7 @@ struct kboScoreTests {
         )
         await model.load(for: game, forceRefresh: true)
         await model.waitForBoxscoreLoadForTesting()
+        await model.waitForDetailLoadForTesting()
         await model.waitForOfficialFallbackLoadForTesting()
 
         let presentation = GameDetailPresentation(
@@ -12442,6 +12597,7 @@ struct kboScoreTests {
 
         await model.load(for: game)
         await model.waitForBoxscoreLoadForTesting()
+        await model.waitForDetailLoadForTesting()
         await model.waitForOfficialFallbackLoadForTesting()
 
         #expect(await boxscoreState.fetchCount == 1)
@@ -13441,6 +13597,7 @@ struct kboScoreTests {
         async let firstLoad: Void = model.load(for: game, forceRefresh: true)
         async let secondLoad: Void = model.load(for: game, forceRefresh: true)
         _ = await (firstLoad, secondLoad)
+        await model.waitForDetailLoadForTesting()
 
         #expect(await fetcher.fetchCount == 1)
         #expect(model.cachedLineScore?.awayTotals.hits == "7")
@@ -13461,6 +13618,54 @@ struct kboScoreTests {
         #expect(final.liveRefreshTaskID.hasPrefix("idle:"))
         #expect(cancelled.shouldAutoRefreshLiveGame == false)
         #expect(cancelled.liveRefreshTaskID.hasPrefix("idle:"))
+    }
+
+    @Test(arguments: [true, false])
+    func heartbeatOnlyStreamFallsBackAndKeepsRetrying(afterSnapshot: Bool) async throws {
+        let game = try makeLiveBoxscoreDetailGame(status: .live)
+        var now = game.scheduledStart.addingTimeInterval(60)
+        let state = RecordingGameDetailSnapshotState(result: .failure(TestRepositoryError.supabaseUnavailable))
+        let repository = DetailSnapshotStubRepository(
+            base: StubRepository(),
+            fetchGameDetailSnapshot: { game, identity, teams in
+                try await state.fetch(game: game, identity: identity, teams: teams)
+            }
+        )
+        let (stream, continuation) = AsyncThrowingStream<GameLiveStreamEvent, Error>.makeStream()
+        let model = AppModel(
+            repository: repository,
+            gameLiveStreamClient: ControlledGameLiveStreamClient(stream: stream),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [game], notifications: [], settings: .default),
+            usePersistedSettings: false,
+            currentDateProvider: { now },
+            gameDetailPollingIntervalNanoseconds: 10_000_000
+        )
+        defer { model.stopLiveGameDetailPolling(); continuation.finish() }
+        await model.startLiveGameDetailPolling(gameIdentity: game.stableDetailIdentity)
+        if afterSnapshot {
+            continuation.yield(.snapshot(GameLiveStateResponse(
+                publicGameId: game.publicGameID!, status: "live", inning: 3, half: "bottom",
+                awayScore: 4, homeScore: 2, balls: 2, strikes: 1, outs: 0,
+                bases: .init(first: false, second: false, third: false),
+                currentPitcherName: nil, currentBatterName: nil,
+                rawHash: "before-stall", updatedAtKst: "2026-05-10T14:10:00+09:00"
+            )))
+            let applied = await eventually(timeout: 1, interval: 10_000_000) {
+                model.gameDetailRecordRefreshSignal(for: game.stableDetailIdentity) != nil
+            }
+            try #require(applied)
+        } else {
+            // Let the stream establish its initial deadline before advancing the clock.
+            continuation.yield(.heartbeat)
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(await state.fetchCount == 0)
+        now = now.addingTimeInterval(61)
+        continuation.yield(.heartbeat)
+        let retried = await eventually(timeout: 2, interval: 10_000_000) {
+            await state.fetchCount >= 2
+        }
+        #expect(retried)
     }
 
     // liveGameDetailEntryStartsPolling 메서드는 상세 화면 진입 시 live 경기 polling이 시작되는지 검증합니다.
@@ -13793,6 +13998,8 @@ struct kboScoreTests {
         )
         let model = AppModel(
             repository: repository,
+            gameLiveStateClient: NoOpGameLiveStateClient(),
+            gameLiveStreamClient: NoOpGameLiveStreamClient(),
             bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [game], notifications: [], settings: .default),
             usePersistedSettings: false,
             gameDetailPollingIntervalNanoseconds: 5_000_000_000
@@ -14244,7 +14451,7 @@ struct kboScoreTests {
         let snapshot = await runtimeState.snapshot()
         let documentsData = try Data(contentsOf: documentsURL)
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "업데이트 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "업데이트 LG")
         #expect(String(data: documentsData, encoding: .utf8)?.contains("업데이트 LG") == true)
         #expect(snapshot.localBootstrapSource == .documents)
         #expect(snapshot.bootstrapRefreshETag == "\"bootstrap-v1\"")
@@ -14318,7 +14525,7 @@ struct kboScoreTests {
         let snapshot = await runtimeState.snapshot()
         let documentsData = try Data(contentsOf: documentsURL)
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "문서 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "문서 LG")
         #expect(documentsData == originalData)
         #expect(snapshot.bootstrapLastResult == .notModified)
         #expect(snapshot.bootstrapRefreshETag == "\"bootstrap-v1\"")
@@ -14374,7 +14581,7 @@ struct kboScoreTests {
         let snapshot = await runtimeState.snapshot()
         let documentsData = try Data(contentsOf: documentsURL)
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "문서 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "문서 LG")
         #expect(documentsData == originalData)
         #expect(snapshot.localBootstrapSource == .documents)
         #expect(snapshot.bootstrapLastResult == .failed)
@@ -14425,7 +14632,7 @@ struct kboScoreTests {
         let bootstrap = try await repository.fetchBootstrapData()
         let snapshot = await runtimeState.snapshot()
 
-        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.name == "번들 LG")
+        #expect(bootstrap.teams.first(where: { $0.id == "lg" })?.englishName == "번들 LG")
         #expect(snapshot.localBootstrapSource == .bundled)
         #expect(snapshot.bootstrapLastResult == .failed)
     }
@@ -14587,7 +14794,7 @@ struct kboScoreTests {
         )
 
         await model.loadIfNeeded()
-        #expect(model.teams.first(where: { $0.id == "lg" })?.name == "이전 LG")
+        #expect(model.teams.first(where: { $0.id == "lg" })?.englishName == "이전 LG")
 
         URLProtocolStub.testResponses = [
             "https://example.com/api/v1/bootstrap": StubResponse(
@@ -14601,7 +14808,7 @@ struct kboScoreTests {
         await model.refreshHome()
 
         let documentsData = try Data(contentsOf: documentsURL)
-        #expect(model.teams.first(where: { $0.id == "lg" })?.name == "최신 LG")
+        #expect(model.teams.first(where: { $0.id == "lg" })?.englishName == "최신 LG")
         #expect(String(data: documentsData, encoding: .utf8)?.contains("최신 LG") == true)
         #expect(model.debugBootstrapLastResult == "업데이트됨")
         #expect(model.debugBootstrapETag == "\"bootstrap-v2\"")
@@ -15263,7 +15470,7 @@ struct kboScoreTests {
         let live = LiveKBORepository(baseURL: URL(string: "https://example.com/api/")!, session: session)
         let repository = FallbackKBORepository(primary: live, fallback: MockKBORepository(), runtimeState: nil)
         URLProtocolStub.testResponses = [
-            "https://example.com/api/v1/schedule/month?year=2026&month=3": StubResponse(statusCode: 500, data: Data())
+            "https://example.com/api/v1/games/month?year=2026&month=3": StubResponse(statusCode: 500, data: Data())
         ]
         defer { URLProtocolStub.testResponses = [:] }
 
@@ -15275,6 +15482,8 @@ struct kboScoreTests {
 
     // cachedRepositoryReusesFreshGameCache 메서드는 이 타입의 주요 동작을 수행합니다.
     @Test func cachedRepositoryReusesFreshGameCache() async throws {
+        let cacheDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheDirectory) }
         let counter = FetchCounter()
         let repository = CachedKBORepository(
             base: StubRepository(
@@ -15283,7 +15492,7 @@ struct kboScoreTests {
                     return MockKBOData.makeBootstrap().games
                 }
             ),
-            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 60, notificationsTTL: 1, monthlyScheduleTTL: 60),
+            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 60, notificationsTTL: 1, monthlyScheduleTTL: 60, diskCacheDirectory: cacheDirectory),
             runtimeState: nil
         )
 
@@ -15296,6 +15505,8 @@ struct kboScoreTests {
 
     // cachedRepositoryFallsBackToStaleCacheAfterFailedRefresh 메서드는 이 타입의 주요 동작을 수행합니다.
     @Test func cachedRepositoryFallsBackToStaleCacheAfterFailedRefresh() async throws {
+        let cacheDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheDirectory) }
         let counter = FetchCounter()
         let runtimeState = RepositoryRuntimeState(activeSource: .live, baseURL: "https://example.com", deliverySource: .live)
         let repository = CachedKBORepository(
@@ -15308,7 +15519,7 @@ struct kboScoreTests {
                     throw URLError(.timedOut)
                 }
             ),
-            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 0, notificationsTTL: 1, monthlyScheduleTTL: 60),
+            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 0, notificationsTTL: 1, monthlyScheduleTTL: 60, diskCacheDirectory: cacheDirectory),
             runtimeState: runtimeState
         )
 
@@ -15324,6 +15535,8 @@ struct kboScoreTests {
 
     // cachedRepositoryReusesFreshMonthlyScheduleCache 메서드는 이 타입의 주요 동작을 수행합니다.
     @Test func cachedRepositoryReusesFreshMonthlyScheduleCache() async throws {
+        let cacheDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheDirectory) }
         let counter = FetchCounter()
         let repository = CachedKBORepository(
             base: StubRepository(
@@ -15332,7 +15545,7 @@ struct kboScoreTests {
                     return stubGames()
                 }
             ),
-            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 1, notificationsTTL: 1, monthlyScheduleTTL: 60),
+            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 1, notificationsTTL: 1, monthlyScheduleTTL: 60, diskCacheDirectory: cacheDirectory),
             runtimeState: nil
         )
 
@@ -15346,6 +15559,8 @@ struct kboScoreTests {
 
     // cachedRepositoryBypassesFreshMonthlyScheduleCacheWhenRequested 메서드는 이 타입의 주요 동작을 수행합니다.
     @Test func cachedRepositoryBypassesFreshMonthlyScheduleCacheWhenRequested() async throws {
+        let cacheDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheDirectory) }
         let counter = FetchCounter()
         let fullSchedule = stubGames()
         let refreshedSchedule = Array(fullSchedule.prefix(1))
@@ -15356,7 +15571,7 @@ struct kboScoreTests {
                     return attempt == 1 ? fullSchedule : refreshedSchedule
                 }
             ),
-            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 1, notificationsTTL: 1, monthlyScheduleTTL: 60),
+            configuration: RepositoryCacheConfiguration(bootstrapTTL: 1, gamesTTL: 1, notificationsTTL: 1, monthlyScheduleTTL: 60, diskCacheDirectory: cacheDirectory),
             runtimeState: nil
         )
 
@@ -15505,7 +15720,7 @@ struct kboScoreTests {
             teams: KBODataMapper.mapBootstrap(MockKBOData.makeBootstrapDTO()).teams
         )
         let repository = StubRepository(fetchMonthlySchedule: { _ in schedule })
-        let model = AppModel(repository: repository, bootstrap: MockKBOData.makeBootstrap(now: referenceDate), usePersistedSettings: false)
+        let model = AppModel(repository: repository, bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default), usePersistedSettings: false)
 
         model.settings.favoriteTeamID = "lg"
         await model.loadMyTeamScheduleIfNeeded(for: referenceDate)
@@ -15525,7 +15740,7 @@ struct kboScoreTests {
         let repository = StubRepository(fetchMonthlySchedule: { _ in schedule })
         let model = AppModel(
             repository: repository,
-            bootstrap: MockKBOData.makeBootstrap(now: referenceDate),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default),
             usePersistedSettings: false,
             currentDateProvider: { referenceDate }
         )
@@ -15559,7 +15774,7 @@ struct kboScoreTests {
         let referenceDate = isoDate("2026-06-20T09:00:00+09:00")
         let monthKey = KBOMonthScheduleKey(date: referenceDate)
         let schedule = try makeScheduleMonthGames(count: 135, year: 2026, month: 6)
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let emptyBootstrap = KBOBootstrapData(
             teams: bootstrap.teams,
             games: [],
@@ -15600,7 +15815,7 @@ struct kboScoreTests {
         let nonCurrentMonthKey = KBOMonthScheduleKey(year: 2026, month: 5)
         let juneSchedule = try makeScheduleMonthGames(count: 135, year: 2026, month: 6)
         let maySchedule = try makeScheduleMonthGames(count: 135, year: 2026, month: 5)
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let model = AppModel(
             bootstrap: KBOBootstrapData(teams: bootstrap.teams, games: [], notifications: [], settings: bootstrap.settings),
             usePersistedSettings: false,
@@ -15632,7 +15847,7 @@ struct kboScoreTests {
         let referenceDate = isoDate("2026-06-21T09:00:00+09:00")
         let currentMonthKey = KBOMonthScheduleKey(year: 2026, month: 6)
         let juneSchedule = try makeScheduleMonthGames(count: 135, year: 2026, month: 6)
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let model = AppModel(
             bootstrap: KBOBootstrapData(teams: bootstrap.teams, games: [], notifications: [], settings: bootstrap.settings),
             usePersistedSettings: false,
@@ -15664,7 +15879,7 @@ struct kboScoreTests {
         let displayedMonthKey = KBOMonthScheduleKey(year: 2026, month: 5)
         let juneSchedule = try makeScheduleMonthGames(count: 135, year: 2026, month: 6)
         let maySchedule = try makeScheduleMonthGames(count: 135, year: 2026, month: 5)
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let model = AppModel(
             bootstrap: KBOBootstrapData(teams: bootstrap.teams, games: [], notifications: [], settings: bootstrap.settings),
             usePersistedSettings: false,
@@ -15741,7 +15956,7 @@ struct kboScoreTests {
         let todayGames = schedule.filter {
             ScheduleDateKeyFormatter.dayKey(for: $0.scheduledStart) == "2026-06-20"
         }
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let emptyBootstrap = KBOBootstrapData(
             teams: bootstrap.teams,
             games: [],
@@ -15792,7 +16007,7 @@ struct kboScoreTests {
         let currentMonthKey = KBOMonthScheduleKey(year: 2026, month: 6)
         let juneSchedule = try makeScheduleMonthGames(count: 110, year: 2026, month: 6)
         let partialGame = try #require(juneSchedule.first { $0.involves(teamID: "lotte") })
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let fullMonthModel = AppModel(
             bootstrap: KBOBootstrapData(teams: bootstrap.teams, games: [], notifications: [], settings: bootstrap.settings),
             usePersistedSettings: false,
@@ -15834,7 +16049,7 @@ struct kboScoreTests {
         let currentMonthKey = KBOMonthScheduleKey(year: 2026, month: 6)
         let juneSchedule = try makeScheduleMonthGames(count: 110, year: 2026, month: 6)
         let partialGame = try #require(juneSchedule.first { $0.involves(teamID: "lotte") })
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let fullMonthModel = AppModel(
             bootstrap: KBOBootstrapData(teams: bootstrap.teams, games: [], notifications: [], settings: bootstrap.settings),
             usePersistedSettings: false,
@@ -15877,7 +16092,7 @@ struct kboScoreTests {
         let referenceDate = isoDate("2026-06-21T09:00:00+09:00")
         let juneSchedule = try makeScheduleMonthGames(count: 110, year: 2026, month: 6)
         let partialGame = try #require(juneSchedule.first { $0.involves(teamID: "lotte") })
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let model = AppModel(
             repository: FavoriteScheduleStubRepository(
                 base: StubRepository(fetchMonthlySchedule: { _ in [] }),
@@ -15906,7 +16121,7 @@ struct kboScoreTests {
         let referenceDate = isoDate("2026-06-21T09:00:00+09:00")
         let currentMonthKey = KBOMonthScheduleKey(year: 2026, month: 6)
         let juneSchedule = try makeScheduleMonthGames(count: 110, year: 2026, month: 6)
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let model = AppModel(
             bootstrap: KBOBootstrapData(teams: bootstrap.teams, games: [], notifications: [], settings: bootstrap.settings),
             usePersistedSettings: false,
@@ -15929,7 +16144,7 @@ struct kboScoreTests {
         let referenceDate = isoDate("2026-06-21T09:00:00+09:00")
         let currentMonthKey = KBOMonthScheduleKey(year: 2026, month: 6)
         let juneSchedule = try makeScheduleMonthGames(count: 135, year: 2026, month: 6)
-        let bootstrap = MockKBOData.makeBootstrap(now: referenceDate)
+        let bootstrap = KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default)
         let model = AppModel(
             bootstrap: KBOBootstrapData(teams: bootstrap.teams, games: [], notifications: [], settings: bootstrap.settings),
             usePersistedSettings: false,
@@ -15997,7 +16212,7 @@ struct kboScoreTests {
         viewModel.selectedDate = referenceDate
 
         let loadTask = Task { await viewModel.loadDisplayedMonth(appModel: model) }
-        await gate.waitUntilStarted()
+        try await gate.waitUntilStarted()
 
         #expect(viewModel.isLoadingDisplayedMonth)
         #expect(viewModel.selectedGamesContentState == .initialLoading)
@@ -16083,7 +16298,7 @@ struct kboScoreTests {
         await viewModel.loadDisplayedMonth(appModel: model)
 
         let refreshTask = Task { await viewModel.refreshDisplayedMonth(appModel: model) }
-        await gate.waitUntilStarted()
+        try await gate.waitUntilStarted()
 
         #expect(viewModel.selectedDateGames.isEmpty == false)
         #expect(viewModel.selectedGamesContentState == .loaded)
@@ -16121,7 +16336,7 @@ struct kboScoreTests {
         await viewModel.loadDisplayedMonth(appModel: model)
 
         let refreshTask = Task { await viewModel.refreshDisplayedMonth(appModel: model) }
-        await gate.waitUntilStarted()
+        try await gate.waitUntilStarted()
 
         #expect(viewModel.monthGameCount == fullMonthGames.count)
         #expect(viewModel.selectedGamesContentState == .loaded)
@@ -16254,7 +16469,7 @@ struct kboScoreTests {
         viewModel.selectedDate = referenceDate
 
         let loadTask = Task { await viewModel.loadDisplayedMonth(appModel: model) }
-        await gate.waitUntilStarted()
+        try await gate.waitUntilStarted()
         #expect(viewModel.selectedGamesContentState == .initialLoading)
 
         await gate.release()
@@ -16339,7 +16554,7 @@ struct kboScoreTests {
         )
 
         await model.loadScheduleIfNeeded(for: referenceDate)
-        await model.loadScheduleDayIfNeeded(for: referenceDate)
+        await model.refreshScheduleDay(for: referenceDate)
 
         #expect(await dayFetchCounter.value == 1)
     }
@@ -17471,7 +17686,7 @@ struct kboScoreTests {
         viewModel.selectedDate = selectedDate
 
         await viewModel.loadDisplayedMonth(appModel: model)
-        await model.refreshScheduleDay(for: selectedDate)
+        await viewModel.refreshLiveScoresIfNeeded(appModel: model)
         await viewModel.loadDisplayedMonth(appModel: model)
 
         #expect(viewModel.monthGameCount == 135)
@@ -18158,7 +18373,11 @@ struct kboScoreTests {
     // scheduleRowsMarkOnlyGamesWhoseDatabaseIDIsAttended 메서드는 일정 row 직관 마커 조건이 DB UUID 하나에만 켜지는지 검증합니다.
     @Test func scheduleRowsMarkOnlyGamesWhoseDatabaseIDIsAttended() throws {
         let bootstrap = MockKBOData.makeBootstrap()
-        let games = Array(bootstrap.games.prefix(5))
+        let games = Array(bootstrap.games.prefix(5)).map { game in
+            makeGameDetail(id: UUID(), scheduledStart: game.scheduledStart, venue: game.venue,
+                           awayTeam: game.awayTeam, homeTeam: game.homeTeam,
+                           awayScore: game.awayScore, homeScore: game.homeScore, status: game.status)
+        }
         #expect(games.count == 5)
         let attendedGame = try #require(games.dropFirst(2).first)
         let model = AppModel(
@@ -18226,7 +18445,7 @@ struct kboScoreTests {
         let teams = MockKBOData.makeBootstrap().teams
         let lg = try #require(teams.first { $0.id == "lg" })
         let doosan = try #require(teams.first { $0.id == "doosan" })
-        let selectedID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let selectedID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         let otherID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
         let selected = makeGameDetail(
             id: selectedID,
@@ -18323,7 +18542,7 @@ struct kboScoreTests {
                 scheduledStart: isoDate(String(format: "2026-07-%02dT18:30:00+09:00", (index % 28) + 1)),
                 venue: "잠실",
                 awayTeam: index.isMultiple(of: 2) ? teams.doosan : teams.samsung,
-                homeTeam: teams.lg,
+                homeTeam: index < 4 ? teams.lg : teams.lotte,
                 awayScore: awayScore,
                 homeScore: homeScore,
                 status: status,
@@ -18452,7 +18671,7 @@ struct kboScoreTests {
         let model = AppModel(
             repository: repository,
             repositoryRuntimeState: runtimeState,
-            bootstrap: MockKBOData.makeBootstrap(now: referenceDate),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default),
             usePersistedSettings: false
         )
 
@@ -18470,7 +18689,7 @@ struct kboScoreTests {
         let session = makeStubSession()
         let repository = LiveKBORepository(baseURL: URL(string: "https://example.com/api/")!, session: session)
         URLProtocolStub.testResponses = [
-            "https://example.com/api/v1/schedule/month?year=2026&month=3": StubResponse(statusCode: 200, data: backendMonthlyPayload)
+            "https://example.com/api/v1/games/month?year=2026&month=3": StubResponse(statusCode: 200, data: backendMonthlyPayload)
         ]
         URLProtocolStub.lastRequest = nil
         defer {
@@ -18484,7 +18703,7 @@ struct kboScoreTests {
         print("[ScheduleDebugTest] requestedURL=\(requestedURL)")
         print("[ScheduleDebugTest] decodedGamesCount=\(schedule.count)")
 
-        #expect(requestedURL == "https://example.com/api/v1/schedule/month?year=2026&month=3")
+        #expect(requestedURL == "https://example.com/api/v1/games/month?year=2026&month=3")
         #expect(schedule.count == 15)
 
         let referenceDate = isoDate("2026-03-01T00:00:00+09:00")
@@ -18797,7 +19016,7 @@ struct kboScoreTests {
         let repository = TeamRankFlowRepository(state: state)
         let model = AppModel(
             repository: repository,
-            bootstrap: MockKBOData.makeBootstrap(now: isoDate("2026-05-06T12:00:00+09:00")),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default),
             usePersistedSettings: false,
             currentDateProvider: { isoDate("2026-05-06T12:00:00+09:00") }
         )
@@ -18960,6 +19179,97 @@ struct kboScoreTests {
         #expect(doosanSnapshot.rankMovement == RankingMovement.unchanged)
     }
 
+    @Test(arguments: [true, false])
+    func partialHomeStandingsSourceDoesNotReplaceSeasonRankRows(loadHomeFirst: Bool) async throws {
+        let teams = MockKBOData.makeBootstrap().teams
+        let lg = try #require(teams.first { $0.id == "lg" })
+        let kia = try #require(teams.first { $0.id == "kia" })
+        let partialGame = makeGameDetail(
+            id: UUID(), scheduledStart: isoDate("2026-10-12T18:30:00+09:00"),
+            venue: "잠실", awayTeam: kia, homeTeam: lg,
+            awayScore: 2, homeScore: 5, status: .final, seasonClassification: .regularSeason
+        )
+        let rows = sampleTeamRankRows()
+        let state = TeamRankFlowState(localRanks: rows, remoteRanks: rows, standingsGames: [partialGame])
+        let model = AppModel(
+            repository: TeamRankFlowRepository(state: state),
+            bootstrap: KBOBootstrapData(teams: teams, games: [], notifications: [], settings: .default),
+            usePersistedSettings: false,
+            currentDateProvider: { isoDate("2026-10-24T12:00:00+09:00") }
+        )
+
+        if loadHomeFirst { await model.refreshHome() }
+        await model.loadStandingsIfNeeded()
+        #expect(model.standingsSnapshots.first?.wins == rows.first?.wins)
+        if !loadHomeFirst { await model.refreshHome() }
+        await model.refreshStandings()
+
+        #expect(await state.standingsSourceFetchCount == 1)
+        for row in rows {
+            let snapshot = try requireStandingsSnapshot(in: model.standingsSnapshots, teamID: row.teamCode ?? "")
+            #expect(snapshot.rank == row.rank)
+            #expect(snapshot.wins == row.wins)
+            #expect(snapshot.losses == row.losses)
+            #expect(snapshot.ties == row.draws)
+        }
+    }
+
+    @Test func bootstrapGameRecordsDoNotSkipSavedSeasonRankRows() async throws {
+        let fixture = try makeDoosanSSGStandingsMovementFixture()
+        let rows = sampleTeamRankRows(teams: fixture.teams, ranks: fixture.previousRanks)
+        let state = TeamRankFlowState(localRanks: rows)
+        let model = AppModel(
+            repository: TeamRankFlowRepository(state: state),
+            bootstrap: KBOBootstrapData(teams: fixture.teams, games: fixture.games, notifications: [], settings: .default),
+            usePersistedSettings: false,
+            currentDateProvider: { isoDate("2026-05-28T09:00:00+09:00") }
+        )
+
+        await model.loadStandingsIfNeeded()
+
+        for row in rows {
+            let snapshot = try requireStandingsSnapshot(in: model.standingsSnapshots, teamID: row.teamCode ?? "")
+            #expect(snapshot.wins == row.wins)
+            #expect(snapshot.losses == row.losses)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func completeRegularSeasonSourceCanReplaceOlderSeasonRankRows(cacheIncludesPostseason: Bool) async throws {
+        let teams = MockKBOData.makeBootstrap().teams
+        let lg = try #require(teams.first { $0.id == "lg" })
+        let kia = try #require(teams.first { $0.id == "kia" })
+        let games = (0..<144).map { index in
+            makeGameDetail(
+                id: UUID(), scheduledStart: isoDate("2026-04-10T18:30:00+09:00").addingTimeInterval(Double(index) * 86400),
+                venue: "잠실", awayTeam: kia, homeTeam: lg,
+                awayScore: 2, homeScore: 5, status: .final, seasonClassification: .regularSeason
+            )
+        }
+        let rows = cacheIncludesPostseason ? [TeamRankRow(
+            season: 2026, teamID: UUID(), teamCode: "lg", rank: 1, teamName: "LG 트윈스",
+            gamesPlayed: 146, wins: 90, losses: 56, draws: 0,
+            winningPercentage: 0.616, gamesBehind: 0,
+            streakType: "WIN", streakCount: 1, streakText: "1승"
+        )] : sampleTeamRankRows()
+        let state = TeamRankFlowState(localRanks: rows, remoteRanks: rows, standingsGames: games)
+        let model = AppModel(
+            repository: TeamRankFlowRepository(state: state),
+            bootstrap: KBOBootstrapData(teams: [lg, kia], games: [], notifications: [], settings: .default),
+            usePersistedSettings: false,
+            currentDateProvider: { isoDate("2026-10-24T12:00:00+09:00") }
+        )
+        await model.loadStandingsIfNeeded()
+        await model.refreshHome()
+
+        let lgRecord = try requireStandingsSnapshot(in: model.standingsSnapshots, teamID: "lg")
+        let kiaRecord = try requireStandingsSnapshot(in: model.standingsSnapshots, teamID: "kia")
+        #expect(lgRecord.gamesPlayed == 144)
+        #expect(lgRecord.wins == 144)
+        #expect(kiaRecord.gamesPlayed == 144)
+        #expect(kiaRecord.losses == 144)
+    }
+
     // manualStandingsRefreshUsesRemoteRankRowsWithoutSourceGames 메서드는 이 타입의 주요 동작을 수행합니다.
     @Test func manualStandingsRefreshUsesRemoteRankRowsWithoutSourceGames() async throws {
         let fixture = try makeDoosanSSGStandingsMovementFixture()
@@ -19116,7 +19426,7 @@ struct kboScoreTests {
         let repository = TeamRankFlowRepository(state: state)
         let model = AppModel(
             repository: repository,
-            bootstrap: MockKBOData.makeBootstrap(now: isoDate("2026-05-06T12:00:00+09:00")),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default),
             usePersistedSettings: false,
             currentDateProvider: { isoDate("2026-05-06T12:00:00+09:00") }
         )
@@ -19140,13 +19450,13 @@ struct kboScoreTests {
         let repository = TeamRankFlowRepository(state: state)
         let model = AppModel(
             repository: repository,
-            bootstrap: MockKBOData.makeBootstrap(now: isoDate("2026-05-06T12:00:00+09:00")),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default),
             usePersistedSettings: false,
             currentDateProvider: { isoDate("2026-05-06T12:00:00+09:00") }
         )
 
         let firstLoad = Task { await model.loadStandingsIfNeeded() }
-        await gate.waitUntilStarted()
+        try await gate.waitUntilStarted()
         #expect(await state.remoteFetchCount == 1)
 
         let secondLoad = Task { await model.loadStandingsIfNeeded() }
@@ -19171,7 +19481,7 @@ struct kboScoreTests {
         let repository = TeamRankFlowRepository(state: state)
         let model = AppModel(
             repository: repository,
-            bootstrap: MockKBOData.makeBootstrap(now: isoDate("2026-05-06T12:00:00+09:00")),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default),
             usePersistedSettings: false,
             currentDateProvider: { isoDate("2026-05-06T12:00:00+09:00") }
         )
@@ -19195,14 +19505,14 @@ struct kboScoreTests {
         let repository = TeamRankFlowRepository(state: state)
         let model = AppModel(
             repository: repository,
-            bootstrap: MockKBOData.makeBootstrap(now: isoDate("2026-05-06T12:00:00+09:00")),
+            bootstrap: KBOBootstrapData(teams: MockKBOData.makeBootstrap().teams, games: [], notifications: [], settings: .default),
             usePersistedSettings: false,
             currentDateProvider: { isoDate("2026-05-06T12:00:00+09:00") }
         )
 
         await model.loadStandingsIfNeeded()
         let refreshTask = Task { await model.refreshStandings() }
-        await gate.waitUntilStarted()
+        try await gate.waitUntilStarted()
 
         #expect(model.standingsSnapshots.isEmpty == false)
         #expect(model.standingsSnapshots.first?.team.id == "lg")
@@ -19446,11 +19756,13 @@ private actor RankFetchGate {
     }
 
     // waitUntilStarted 메서드는 이 타입의 주요 동작을 수행합니다.
-    func waitUntilStarted() async {
-        guard didStart == false else { return }
-        await withCheckedContinuation { continuation in
-            startedContinuation = continuation
+    func waitUntilStarted() async throws {
+        for _ in 0..<500 {
+            if didStart { return }
+            try await Task.sleep(for: .milliseconds(10))
         }
+        release()
+        try #require(didStart, "Rank fetch did not start within five seconds")
     }
 
     // release 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -20236,6 +20548,12 @@ private actor RecordingGameLiveStreamState {
     }
 }
 
+private struct ControlledGameLiveStreamClient: GameLiveStreaming {
+    let stream: AsyncThrowingStream<GameLiveStreamEvent, Error>
+    nonisolated var cacheIdentity: String { "controlled-stream" }
+    nonisolated func streamGame(gameId: String) -> AsyncThrowingStream<GameLiveStreamEvent, Error> { stream }
+}
+
 private struct RecordingGameLiveStreamClient: GameLiveStreaming {
     let state: RecordingGameLiveStreamState
     var cacheIdentity: String { "recording-stream" }
@@ -20377,7 +20695,9 @@ private final class BoxscoreURLProtocolStub: URLProtocol, @unchecked Sendable {
 
     // startLoading 메서드는 비동기 작업이나 시스템 연동 흐름을 제어합니다.
     override func startLoading() {
-        Self.lastRequest = request
+        var capturedRequest = request
+        capturedRequest.httpBody = httpBodyData(from: request)
+        Self.lastRequest = capturedRequest
         guard let url = request.url, let response = Self.testResponses[url.absoluteString] else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
@@ -21429,6 +21749,33 @@ private struct FavoriteScheduleCountingRepository: KBORepository, KBOFavoriteTea
 }
 
 // FavoriteScheduleStubRepository 구조체는 테스트에서 응원팀 일정 조회 capability만 선택적으로 추가합니다.
+@MainActor
+private final class HomeRefreshTestSource {
+    var games: [GameDetail]
+    var shouldFail = false
+    var holdNextRequest = false
+    var heldRequest: CheckedContinuation<Void, Never>?
+    var requests: [(date: Date, teamID: String, bypassingCache: Bool)] = []
+
+    init(games: [GameDetail]) { self.games = games }
+
+    func fetch(date: Date, teamID: String, bypassingCache: Bool) async throws -> [GameDetail] {
+        requests.append((date, teamID, bypassingCache))
+        let response = games
+        if holdNextRequest {
+            holdNextRequest = false
+            await withCheckedContinuation { heldRequest = $0 }
+        }
+        if shouldFail { throw TestRepositoryError.supabaseUnavailable }
+        return response
+    }
+
+    func release() {
+        heldRequest?.resume()
+        heldRequest = nil
+    }
+}
+
 private struct FavoriteScheduleStubRepository: KBORepository, KBOFavoriteTeamScheduleDataSource {
     let base: StubRepository
     let fetchFavoriteTeamScheduleHandler: @Sendable (Date, Team.ID, Bool) async throws -> [GameDetail]
@@ -21489,7 +21836,7 @@ private struct FavoriteScheduleStubRepository: KBORepository, KBOFavoriteTeamSch
 
 // eventually 메서드는 이 타입의 주요 동작을 수행합니다.
 private func eventually(
-    timeout: TimeInterval,
+    timeout: TimeInterval = 2,
     interval: UInt64 = 50_000_000,
     condition: @escaping () async -> Bool
 ) async -> Bool {
@@ -21541,7 +21888,9 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
 
     // startLoading 메서드는 비동기 작업이나 시스템 연동 흐름을 제어합니다.
     override func startLoading() {
-        Self.lastRequest = request
+        var capturedRequest = request
+        capturedRequest.httpBody = httpBodyData(from: request)
+        Self.lastRequest = capturedRequest
         guard let url = request.url, let response = Self.testResponses[url.absoluteString] else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
@@ -21700,7 +22049,7 @@ private func makeBootstrapJSON(
               let teamIndex = teams.firstIndex(where: { ($0["id"] as? String) == "lg" }) else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        teams[teamIndex]["name"] = teamName
+        teams[teamIndex]["englishName"] = teamName
         root["teams"] = teams
     }
 
@@ -21826,11 +22175,13 @@ private actor ScheduleFetchGate {
     }
 
     // waitUntilStarted 메서드는 이 타입의 주요 동작을 수행합니다.
-    func waitUntilStarted() async {
-        guard didStart == false else { return }
-        await withCheckedContinuation { continuation in
-            startedContinuation = continuation
+    func waitUntilStarted() async throws {
+        for _ in 0..<500 {
+            if didStart { return }
+            try await Task.sleep(for: .milliseconds(10))
         }
+        release()
+        try #require(didStart, "Rank fetch did not start within five seconds")
     }
 
     // release 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -22125,7 +22476,7 @@ private func makeScheduleMonthGames(
         let scheduledStart = isoDate(String(format: "%04d-%02d-%02dT%02d:00:00+09:00", year, month, day, 13 + slot))
         let status: GameStatus = day < 26 ? .final : .upcoming
         return makeGameDetail(
-            id: UUID(uuidString: String(format: "96000000-0000-0000-0000-%012d", index + 1))!,
+            id: UUID(uuidString: String(format: "96%04d%02d-0000-4000-8000-%012d", year, month, index + 1))!,
             scheduledStart: scheduledStart,
             venue: fixture.venue,
             awayTeam: fixture.away,
@@ -22250,7 +22601,7 @@ private final class NotificationRequestCollector {
 }
 
 // StubRepository 구조체는 KBO 데이터 조회와 저장소 접근 흐름을 담당합니다.
-private struct StubRepository: KBORepository {
+private struct StubRepository: KBORepository, KBOFavoriteTeamScheduleDataSource {
     var fetchBootstrapDataHandler: @Sendable () async throws -> KBOBootstrapData = {
         stubBootstrap()
     }
@@ -22274,10 +22625,10 @@ private struct StubRepository: KBORepository {
     // 이 초기화 메서드는 인스턴스 생성에 필요한 값을 설정합니다.
     init(
         fetchBootstrapData: @escaping @Sendable () async throws -> KBOBootstrapData = { stubBootstrap() },
-        fetchGames: @escaping @Sendable () async throws -> [GameDetail] = { stubGames() },
+        fetchGames: @escaping @Sendable () async throws -> [GameDetail] = { [] },
         fetchNotifications: @escaping @Sendable () async throws -> [NotificationItem] = { stubNotifications() },
-        fetchMonthlySchedule: @escaping @Sendable (KBOMonthScheduleKey) async throws -> [GameDetail] = { _ in stubGames() },
-        fetchSchedule: @escaping @Sendable (Date) async throws -> [GameDetail] = { _ in stubGames() },
+        fetchMonthlySchedule: @escaping @Sendable (KBOMonthScheduleKey) async throws -> [GameDetail] = { _ in [] },
+        fetchSchedule: @escaping @Sendable (Date) async throws -> [GameDetail] = { _ in [] },
         fetchScheduleBypassingCache: (@Sendable (Date, Bool) async throws -> [GameDetail])? = nil,
         fetchStandings: @escaping @Sendable () async throws -> [TeamStandingsSnapshot] = { [] }
     ) {
@@ -22321,6 +22672,11 @@ private struct StubRepository: KBORepository {
             return try await fetchScheduleBypassingCacheHandler(date, bypassingCache)
         }
         return try await fetchScheduleHandler(date)
+    }
+
+    nonisolated func fetchFavoriteTeamSchedule(date: Date, favoriteTeamId: Team.ID, bypassingCache: Bool) async throws -> [GameDetail] {
+        try await fetchSchedule(for: date, bypassingCache: bypassingCache)
+            .filter { $0.involves(teamID: favoriteTeamId) }
     }
 
     // fetchStandings 메서드는 필요한 데이터를 조회하고 로딩 상태를 갱신합니다.

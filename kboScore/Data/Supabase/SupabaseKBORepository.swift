@@ -1200,6 +1200,8 @@ struct SupabaseKBORepository: SupabaseKBOReading, Sendable {
         "provider",
         "provider_game_id",
         "official_provider_game_id",
+        "season_type",
+        "series_id",
         "game_date",
         "scheduled_at",
         "stadium",
@@ -1475,6 +1477,7 @@ struct SupabaseKBORepository: SupabaseKBOReading, Sendable {
             .select(Self.gameSelectColumns)
             .gte("game_date", value: startDate)
             .lte("game_date", value: endDate)
+            .in("season_type", values: ["regular_season", "unknown"])
             .eq("status", value: "final")
             .eq("is_cancelled", value: false)
             .eq("is_postponed", value: false)

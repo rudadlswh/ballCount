@@ -16,6 +16,7 @@ struct GameDetailView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var screenModel = GameDetailScreenModel()
+    @State private var didRequestAttendanceChange = false
     @StateObject private var viewModel: GameDetailViewModel
 
     let gameIdentity: String
@@ -74,6 +75,12 @@ struct GameDetailView: View {
 
                     if presentation.status != .cancelled {
                         actionButtons(for: game)
+                        if didRequestAttendanceChange, let message = appModel.attendanceSyncFailureMessage {
+                            Label(message + " 잠시 후 직관 버튼을 다시 눌러주세요.", systemImage: "exclamationmark.triangle")
+                                .font(.caption)
+                                .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+                                .accessibilityIdentifier("attendance.saveError")
+                        }
                         overviewSection(presentation: presentation)
                     }
                 }
@@ -389,10 +396,11 @@ struct GameDetailView: View {
                 #if DEBUG
                 print("[AttendanceDetail] toggle rawGameID=\(attendanceGameID.uuidString) canonicalGameID=\(GameIdentifier.attendanceCanonicalKey(attendanceGameID)) publicGameID=\(game.publicGameID ?? "none") from=\(before) to=\(!before)")
                 #endif
+                didRequestAttendanceChange = true
                 appModel.toggleGameDetailAttendance(for: game)
             } label: {
                 Label(
-                    isAttended ? "직관 해제" : "직관",
+                    isAttendancePending ? "저장 중…" : (isAttended ? "직관 해제" : "직관"),
                     systemImage: isAttended ? "checkmark.circle.fill" : "checkmark.circle"
                 )
                 .font(.subheadline.weight(.semibold))
@@ -407,6 +415,7 @@ struct GameDetailView: View {
             }
             .buttonStyle(.plain)
             .disabled(isAttendanceButtonDisabled)
+            .accessibilityIdentifier("attendance.toggle")
 
 //            ShareLink(item: game.shareText) {
 //                Label("경기 공유하기", systemImage: "square.and.arrow.up")

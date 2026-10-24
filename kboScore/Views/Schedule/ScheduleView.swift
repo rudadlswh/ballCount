@@ -18,6 +18,15 @@ enum ScheduleDayResultAppearance: Equatable, Sendable {
     case draw
     case neutral
 
+    var color: Color? {
+        switch self {
+        case .win: Color(red: 36 / 255, green: 95 / 255, blue: 168 / 255)
+        case .loss: StadiumPalette.app.primary
+        case .draw: Color(red: 0.36, green: 0.40, blue: 0.46)
+        case .neutral: nil
+        }
+    }
+
     // from 메서드는 이 타입의 주요 동작을 수행합니다.
     static func from(dominantStatus: GameStatus?, favoriteTeamResult: TeamGameResult?) -> ScheduleDayResultAppearance {
         guard dominantStatus == .final, let favoriteTeamResult else {
@@ -61,6 +70,7 @@ struct ScheduleView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = ScheduleViewModel()
+    @State private var postseason = HomePostseasonModel()
 
     var body: some View {
         NavigationStack {
@@ -72,8 +82,12 @@ struct ScheduleView: View {
                     }
 
                     ScheduleCalendarCardView(
-                        viewModel: viewModel
+                        viewModel: viewModel,
+                        postseasonGameAliases: Set(postseason.schedules.values.flatMap { $0 }.flatMap(\.gameIdentityAliases))
                     )
+                    if let message = postseason.errorMessage {
+                        DataStatusBannerView(message: message)
+                    }
                 }
                 .padding(.horizontal, 22)
                 .padding(.bottom, 18)
@@ -81,6 +95,10 @@ struct ScheduleView: View {
             .dashboardScreen()
             .refreshable {
                 await viewModel.refreshDisplayedMonth(appModel: appModel)
+                await postseason.refresh(force: true, scheduleDate: viewModel.displayedMonth)
+            }
+            .task(id: viewModel.displayedMonthKey.yearMonthText) {
+                await postseason.refresh(scheduleDate: viewModel.displayedMonth)
             }
             .task(id: scheduleTaskID) {
                 await viewModel.loadDisplayedMonth(appModel: appModel)
@@ -132,6 +150,7 @@ private struct ScheduleCalendarCardView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .caption) private var calendarDayWidth = 44.0
     @ObservedObject var viewModel: ScheduleViewModel
+    let postseasonGameAliases: Set<String>
 
     private let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
     var body: some View {
@@ -169,6 +188,15 @@ private struct ScheduleCalendarCardView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     calendarGrid
+                }
+
+                if viewModel.scheduleFilter == .myTeam {
+                    HStack(spacing: 14) {
+                        resultLegend("승", appearance: .win)
+                        resultLegend("패", appearance: .loss)
+                        resultLegend("무", appearance: .draw)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
 
                 if viewModel.isLoadingDisplayedMonth {
@@ -231,6 +259,7 @@ private struct ScheduleCalendarCardView: View {
                                     game: game,
                                     favoriteTeamID: appModel.settings.favoriteTeamID,
                                     filter: viewModel.scheduleFilter,
+                                    postseasonGameAliases: postseasonGameAliases,
                                     onAttendanceToggle: {
                                         appModel.toggleGameAttendance(for: game)
                                     }
@@ -467,7 +496,7 @@ private struct ScheduleCalendarCardView: View {
 
     // dayNumberColor 메서드는 이 타입의 주요 동작을 수행합니다.
     private func dayNumberColor(for day: MyTeamCalendarDay) -> Color {
-        if isSelected(day) {
+        if myTeamResultColor(for: day) != nil || (isSelected(day) && viewModel.scheduleFilter != .myTeam) {
             return Color.white
         }
         if let palette = appModel.favoriteStadiumPalette {
@@ -478,7 +507,20 @@ private struct ScheduleCalendarCardView: View {
 
     // markerColor 메서드는 전달된 값을 반영하고 내부 저장 상태를 갱신합니다.
     private func markerColor(for day: MyTeamCalendarDay) -> Color {
-        isSelected(day) ? .white : StadiumPalette.app.textSecondary
+        myTeamResultColor(for: day) != nil || (isSelected(day) && viewModel.scheduleFilter != .myTeam) ? .white : StadiumPalette.app.textSecondary
+    }
+
+    private func myTeamResultColor(for day: MyTeamCalendarDay) -> Color? {
+        guard viewModel.scheduleFilter == .myTeam else { return nil }
+        return dayResultAppearance(for: day).color
+    }
+
+    private func resultLegend(_ title: String, appearance: ScheduleDayResultAppearance) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(appearance.color ?? .clear).frame(width: 8, height: 8)
+            Text(title).font(.caption2).foregroundStyle(StadiumPalette.app.textSecondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // dayResultAppearance 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -510,7 +552,11 @@ private struct ScheduleCalendarCardView: View {
 
     // dayBackground 메서드는 이 타입의 주요 동작을 수행합니다.
     private func dayBackground(for day: MyTeamCalendarDay) -> Color {
-        isSelected(day) ? StadiumPalette.app.primary : .clear
+        if let resultColor = myTeamResultColor(for: day) { return resultColor }
+        if viewModel.scheduleFilter == .myTeam {
+            return isSelected(day) ? StadiumPalette.app.recessedSurface : .clear
+        }
+        return isSelected(day) ? StadiumPalette.app.primary : .clear
     }
 
     // dayTodayBorderColor 메서드는 이 타입의 주요 동작을 수행합니다.
@@ -523,6 +569,9 @@ private struct ScheduleCalendarCardView: View {
 
     // daySelectionBorderColor 메서드는 이 타입의 주요 동작을 수행합니다.
     private func daySelectionBorderColor(for day: MyTeamCalendarDay) -> Color {
+        if isSelected(day), myTeamResultColor(for: day) != nil {
+            return .white
+        }
         if let palette = appModel.favoriteStadiumPalette {
             return isSelected(day) ? palette.tint : .clear
         }
@@ -586,6 +635,7 @@ private struct ScheduleGameRow: View {
     let game: GameDetail
     let favoriteTeamID: String?
     let filter: ScheduleFilter
+    let postseasonGameAliases: Set<String>
     let onAttendanceToggle: () -> Void
 
     var body: some View {
@@ -593,7 +643,7 @@ private struct ScheduleGameRow: View {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
-                        Text(homeAwayLabel).font(.caption2.weight(.semibold))
+                        Text(badgeLabel).font(.caption2.weight(.semibold)).fixedSize(horizontal: true, vertical: false)
                             .foregroundStyle(StadiumPalette.app.tint)
                             .padding(.horizontal, 10).padding(.vertical, 5)
                             .background(StadiumPalette.app.tabBarSelectionSurface, in: Capsule())
@@ -625,16 +675,13 @@ private struct ScheduleGameRow: View {
         "\(game.awayTeam.identity.shortLabel) vs \(game.homeTeam.identity.shortLabel)"
     }
 
-    private var homeAwayLabel: String {
-        if filter == .myTeam, let favoriteTeamID {
-            if game.awayTeam.id == favoriteTeamID {
-                return "원정"
-            }
-            if game.homeTeam.id == favoriteTeamID {
-                return "홈"
-            }
-        }
-        return "리그"
+    private var badgeLabel: String {
+        SchedulePresentation.gameBadgeLabel(
+            for: game,
+            filter: filter,
+            favoriteTeamID: favoriteTeamID,
+            postseasonGameAliases: postseasonGameAliases
+        )
     }
 }
 

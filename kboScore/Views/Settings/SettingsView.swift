@@ -68,11 +68,16 @@ struct SettingsView: View {
                             }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                         Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1)
-                        HStack {
-                            Text("조용한 시간")
-                            Spacer()
-                            Text(appModel.settings.quietHours.description).font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
-                        }.frame(minHeight: 44)
+                        NavigationLink {
+                            quietHoursSettings
+                        } label: {
+                            HStack {
+                                Text("조용한 시간")
+                                Spacer()
+                                Text(appModel.settings.quietHours.description).font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                            }.frame(minHeight: 44)
+                        }.buttonStyle(.plain).accessibilityIdentifier("quietHoursSettings")
                     }.font(.subheadline).cardSurface(padding: 16)
 
                     AppSectionTitle(title: "라이브 액티비티")
@@ -142,6 +147,37 @@ struct SettingsView: View {
         .background(StadiumPalette.app.background)
         .tint(StadiumPalette.app.primary)
         .navigationTitle("경기 알림 설정")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+    }
+
+    private var quietHoursSettings: some View {
+        @Bindable var model = appModel
+        return Form {
+            Section {
+                Toggle("조용한 시간 사용", isOn: $model.settings.quietHours.isEnabled)
+                    .accessibilityIdentifier("quietHours.enabled")
+                if model.settings.quietHours.isEnabled {
+                    Picker("시작", selection: $model.settings.quietHours.startHour) {
+                        ForEach(0..<24, id: \.self) { hour in
+                            Text(String(format: "%02d:00", hour)).tag(hour)
+                        }
+                    }.accessibilityIdentifier("quietHours.start")
+                    Picker("종료", selection: $model.settings.quietHours.endHour) {
+                        ForEach(0..<24, id: \.self) { hour in
+                            Text(String(format: "%02d:00", hour)).tag(hour)
+                        }
+                    }.accessibilityIdentifier("quietHours.end")
+                }
+            } footer: {
+                Text("한국 시간 기준으로 경기 알림을 쉬어요. 시작과 종료를 같은 시간으로 설정하면 하루 종일 알림을 받지 않아요.")
+            }
+            .listRowBackground(StadiumPalette.app.elevatedCard)
+        }
+        .scrollContentBackground(.hidden)
+        .background(StadiumPalette.app.background)
+        .tint(StadiumPalette.app.primary)
+        .navigationTitle("조용한 시간")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
     }

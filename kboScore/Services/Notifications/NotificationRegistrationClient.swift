@@ -11,7 +11,7 @@
 
 import Foundation
 
-protocol NotificationRegistrationClient: Sendable {
+nonisolated protocol NotificationRegistrationClient: Sendable {
     // syncRegistration 메서드는 최신 상태를 다시 가져오고 관련 화면 데이터를 동기화합니다.
     nonisolated func syncRegistration(_ payload: NotificationRegistrationPayload) async throws -> NotificationRegistrationSyncStatus
     nonisolated var debugEndpointDescription: String? { get }

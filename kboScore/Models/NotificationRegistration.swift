@@ -22,7 +22,7 @@ nonisolated enum NotificationAlertType: String, Codable, CaseIterable, Sendable 
 }
 
 // NotificationRegistrationQuietHours 구조체는 NotificationRegistrationQuietHours 타입의 역할과 값을 정의합니다.
-nonisolated struct NotificationRegistrationQuietHours: Codable, Equatable, Sendable {
+nonisolated struct NotificationRegistrationQuietHours: Codable, Hashable, Sendable {
     let startHour: Int
     let endHour: Int
 
@@ -234,6 +234,8 @@ nonisolated struct NotificationRegistrationKey: Hashable, Sendable, CustomString
     let favoriteTeamID: String?
     let notificationsEnabled: Bool
     let endpointDescription: String?
+    let quietHours: NotificationRegistrationQuietHours?
+    let rainDelayEnabled: Bool
     let gameStartEnabled: Bool
     let scoreChangeEnabled: Bool
     let leadChangeEnabled: Bool
@@ -252,6 +254,8 @@ nonisolated struct NotificationRegistrationKey: Hashable, Sendable, CustomString
         favoriteTeamID: String?,
         notificationsEnabled: Bool,
         endpointDescription: String?,
+        quietHours: NotificationRegistrationQuietHours? = nil,
+        rainDelayEnabled: Bool = true,
         gameStartEnabled: Bool = true,
         scoreChangeEnabled: Bool = true,
         leadChangeEnabled: Bool = true,
@@ -268,6 +272,8 @@ nonisolated struct NotificationRegistrationKey: Hashable, Sendable, CustomString
         self.favoriteTeamID = favoriteTeamID
         self.notificationsEnabled = notificationsEnabled
         self.endpointDescription = endpointDescription
+        self.quietHours = quietHours
+        self.rainDelayEnabled = rainDelayEnabled
         self.gameStartEnabled = gameStartEnabled
         self.scoreChangeEnabled = scoreChangeEnabled
         self.leadChangeEnabled = leadChangeEnabled
@@ -291,6 +297,8 @@ nonisolated struct NotificationRegistrationKey: Hashable, Sendable, CustomString
             favoriteTeamID: payload.favoriteTeamID,
             notificationsEnabled: payload.notificationsAuthorized,
             endpointDescription: endpointDescription,
+            quietHours: payload.quietHours,
+            rainDelayEnabled: payload.alertTypes.contains(.rainDelay),
             gameStartEnabled: payload.gameStartEnabled,
             scoreChangeEnabled: payload.scoreChangeEnabled,
             leadChangeEnabled: payload.leadChangeEnabled,

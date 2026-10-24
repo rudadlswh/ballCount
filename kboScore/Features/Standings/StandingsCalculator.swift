@@ -26,7 +26,7 @@ enum StandingsCalculator {
             .filter(\.hasCompleteFinalScore)
             .sorted(by: compareCompletedGamesNewestFirst)
         let seasonCompletedGames = seasonGames
-            .filter { $0.involves(teamID: team.id) }
+            .filter { $0.isRegularSeason && $0.involves(teamID: team.id) }
             .filter(\.hasCompleteFinalScore)
         let wins = standingsCompletedGames.reduce(into: 0) { partialResult, game in
             if game.finalResult(for: team.id) == .win {

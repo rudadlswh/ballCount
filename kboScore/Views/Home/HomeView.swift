@@ -3,6 +3,18 @@ import SwiftUI
 struct HomeView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var postseason = HomePostseasonModel()
+    @State private var isVisible = false
+
+    private var liveRefreshTaskID: String? {
+        guard isVisible, scenePhase == .active, appModel.selectedTab == .home else { return nil }
+        return appModel.settings.favoriteTeamID
+    }
+
+    private var postseasonBracket: PostseasonBracket? {
+        postseason.bracket(standings: appModel.standingsSnapshots, liveGames: appModel.games)
+    }
 
     var body: some View {
         NavigationStack {
@@ -13,6 +25,10 @@ struct HomeView: View {
                     if let message = appModel.statusMessage(for: .home) {
                         DataStatusBannerView(message: message)
                     }
+                    if let bracket = postseasonBracket {
+                        HomePostseasonBracketView(bracket: bracket, favoriteTeamID: appModel.settings.favoriteTeamID)
+                    }
+                    if let message = postseason.errorMessage { DataStatusBannerView(message: message) }
                     if appModel.isLoading && appModel.games.isEmpty {
                         ProgressView("경기를 불러오는 중")
                             .frame(maxWidth: .infinity, minHeight: 200)
@@ -49,8 +65,27 @@ struct HomeView: View {
                 .padding(.bottom, 18)
             }
             .dashboardScreen()
-            .refreshable { await appModel.refreshHome() }
+            .refreshable {
+                await appModel.refreshHome()
+                await postseason.refresh(force: true)
+            }
             .task { await appModel.loadStandingsIfNeeded() }
+            .onAppear { isVisible = true }
+            .onDisappear { isVisible = false }
+            .task(id: liveRefreshTaskID) {
+                guard liveRefreshTaskID != nil else { return }
+                while !Task.isCancelled {
+                    await appModel.refreshHomeAutomatically()
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                }
+            }
+            .task(id: scenePhase == .active && appModel.selectedTab == .home) {
+                guard scenePhase == .active, appModel.selectedTab == .home else { return }
+                while !Task.isCancelled {
+                    await postseason.refresh()
+                    do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                }
+            }
             .navigationDestination(for: String.self) { GameDetailView(gameIdentity: $0) }
             .navigationDestination(for: GameDetail.self) { GameDetailView(game: $0) }
         }

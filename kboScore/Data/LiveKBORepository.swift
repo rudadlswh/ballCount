@@ -322,7 +322,7 @@ struct LiveKBORepository: KBORepository, Sendable {
             case .teams:
                 "v1/teams"
             case .monthlySchedule(let month):
-                "api/v1/games/month?year=\(month.year)&month=\(month.month)"
+                "/api/v1/games/month?year=\(month.year)&month=\(month.month)"
             }
         }
     }

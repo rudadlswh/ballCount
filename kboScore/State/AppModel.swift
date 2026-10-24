@@ -211,6 +211,7 @@ final class AppModel {
     private var gameDetailRecordRefreshSequence = 0
     private var inFlightAttendanceTasks: [UUID: Task<Void, Never>] = [:]
     private var attendanceListSyncInFlight = false
+    private var attendanceMutationGeneration = 0
     private var attendanceListSyncSuppressed = false
     private var attendanceSyncDisabled = false
     private var lastAttendanceListFailureSignature: String?
@@ -468,6 +469,7 @@ final class AppModel {
 
     // publishBootstrapStandings 메서드는 bootstrap으로 초기화된 화면 상태의 순위 행을 즉시 계산합니다.
     private func publishBootstrapStandings() {
+        guard games.contains(where: { $0.isRegularSeason && $0.hasCompleteFinalScore }) else { return }
         refreshLocalStandingsProbabilitySignalsSynchronously()
         refreshPublishedStandingsRowsWithCurrentSource(
             season: currentStandingsSeason(),
@@ -550,7 +552,7 @@ final class AppModel {
         if HomeFavoriteGameRefreshPolicy.shouldSkipRecentRefresh(
             reason: reason,
             lastRefreshedAt: lastHomeFavoriteGameRefreshAt[refreshKey],
-            now: Date()
+            now: currentDateProvider()
         ) {
             #if DEBUG
             print("HomeFavoriteGameRefresh skipped reason=recent date=\(dayKey) favoriteTeamId=\(favoriteTeamID)")
@@ -588,6 +590,8 @@ final class AppModel {
                 favoriteTeamId: favoriteTeamID,
                 bypassingCache: bypassingCache
             )
+            guard settings.favoriteTeamID == favoriteTeamID,
+                  scheduleDayKey(for: currentDateProvider()) == refreshKey.dayKey else { return }
             homeFavoriteTeamGames = fetched
             let upsertResult = upsertScheduleGamesIntoLocalStore(fetched, source: .homeFavoriteRefresh)
             let cacheUpsertResult = await upsertScheduleGamesIntoRepositoryCache(fetched)
@@ -608,7 +612,7 @@ final class AppModel {
                 )
             }
             markRefreshSuccess(for: .games, at: Date(), isStale: false)
-            lastHomeFavoriteGameRefreshAt[refreshKey] = Date()
+            lastHomeFavoriteGameRefreshAt[refreshKey] = currentDateProvider()
             await refreshRepositoryDebugInfo(dataSets: [.games])
         } catch is CancellationError {
             #if DEBUG
@@ -626,6 +630,19 @@ final class AppModel {
     func refreshHome() async {
         await refreshFavoriteTeamGameForHome(reason: "homeRefresh", bypassingCache: true)
         await loadHomeFallbackStandingsSourceIfNeeded(reason: "homeRefresh")
+    }
+
+    func refreshHomeAutomatically() async {
+        guard !Task.isCancelled, selectedTab == .home,
+              let favoriteTeamID = settings.favoriteTeamID else { return }
+        let now = currentDateProvider()
+        let key = HomeFavoriteGameRefreshKey(dayKey: scheduleDayKey(for: now), favoriteTeamID: favoriteTeamID)
+        let hasLiveGame = homeTodayGames.contains {
+            $0.involves(teamID: favoriteTeamID) && $0.shouldPollGameDetail(now: now)
+        }
+        // Check once per team/day, then poll games from their scheduled start and retry failures.
+        guard lastHomeFavoriteGameRefreshAt[key] == nil || hasLiveGame || refreshFailures.contains(.games) else { return }
+        await refreshFavoriteTeamGameForHome(reason: "homeAutomatic", bypassingCache: true)
     }
 
     // refreshTodayOnForeground 메서드는 최신 상태를 다시 가져오고 관련 화면 데이터를 동기화합니다.
@@ -698,7 +715,8 @@ final class AppModel {
     // loadStandingsIfNeeded 메서드는 필요한 데이터를 조회하고 로딩 상태를 갱신합니다.
     func loadStandingsIfNeeded() async {
         let season = currentStandingsSeason()
-        if standingsSnapshots.isEmpty == false {
+        if standingsSnapshots.isEmpty == false,
+           standingsSnapshotCacheBySeason[season]?.isEmpty == false || !(repository is any KBOTeamRankDataSource) {
             #if DEBUG
             print("[StandingsRank] load skipped reason=visibleRows season=\(season) rows=\(standingsSnapshots.count)")
             #endif
@@ -956,6 +974,9 @@ final class AppModel {
     // storeStandingsSourceGames 메서드는 전달된 값을 반영하고 내부 저장 상태를 갱신합니다.
     private func storeStandingsSourceGames(_ games: [GameDetail], season: Int) {
         standingsSourceGamesBySeason[season] = games
+        if standingsSnapshotCacheBySeason[season]?.isEmpty == false {
+            refreshPublishedStandingsRowsWithCurrentSource(season: season, reason: "standingsSourceUpdated")
+        }
         #if DEBUG
         print("[StandingsRankMovement] source stored season=\(season) count=\(games.count)")
         #endif
@@ -1293,7 +1314,12 @@ final class AppModel {
 
     // makeStandingsSnapshotsForCurrentState 메서드는 화면이나 도메인 모델에 필요한 값을 생성합니다.
     private func makeStandingsSnapshotsForCurrentState(season: Int) -> [TeamStandingsSnapshot] {
-        if standingsSourceGamesBySeason[season]?.isEmpty == false {
+        if let sourceGames = standingsSourceGamesBySeason[season], sourceGames.isEmpty == false,
+           (standingsSnapshotCacheBySeason[season] ?? []).allSatisfy({ snapshot in
+               sourceGames.lazy.filter {
+                   $0.isRegularSeason && $0.hasCompleteFinalScore && $0.involves(teamID: snapshot.team.id)
+               }.count >= min(snapshot.gamesPlayed, 144)
+           }) {
             let preGameRanks = preGameRankByTeamID(for: season)
             return gameCalculatedStandingsSnapshots(season: season, preGameRanks: preGameRanks)
         }
@@ -2576,8 +2602,6 @@ final class AppModel {
         }
 
         var endedForTerminalStatus = false
-        var didReceiveSnapshotEvent = false
-        var didRunNoSnapshotFallback = false
         var snapshotEventFallbackDeadline = currentDateProvider().addingTimeInterval(60)
         logGameDetailPolling("stream request gameId=\(streamGameID) identity=\(identity)")
         for try await event in gameLiveStreamClient.streamGame(gameId: streamGameID) {
@@ -2590,28 +2614,14 @@ final class AppModel {
             switch event {
             case .heartbeat:
                 logGameDetailPolling("heartbeat received identity=\(identity)")
-                if didReceiveSnapshotEvent == false,
-                   didRunNoSnapshotFallback == false,
-                   currentDateProvider() >= snapshotEventFallbackDeadline,
-                   let selectedGame = await resolveGameDetailSelection(for: identity) {
-                    didRunNoSnapshotFallback = true
-                    snapshotEventFallbackDeadline = currentDateProvider().addingTimeInterval(60)
+                if currentDateProvider() >= snapshotEventFallbackDeadline {
+                    // Heartbeats prove connectivity, not that game snapshots are still arriving.
+                    // Use the existing retrying polling loop until the game ends or the view closes.
                     logGameDetailPolling("fallback polling requested reason=noSnapshotRecently identity=\(identity)")
-                    var result = await refreshLatestGameSnapshotOnlyResult(
-                        for: identity,
-                        selectedGame: selectedGame
-                    )
-                    if result == nil {
-                        result = await refreshGameDetailResult(for: identity, initialGame: selectedGame, forceRefresh: true)
-                    }
-                    if let result {
-                        logStreamSnapshotApplyCompleted(publicGameID: result.publicGameID ?? streamGameID, game: result.game)
-                    }
+                    throw URLError(.timedOut)
                 }
                 continue
             case .snapshot(let liveState), .statusChanged(let liveState):
-                didReceiveSnapshotEvent = true
-                didRunNoSnapshotFallback = false
                 snapshotEventFallbackDeadline = currentDateProvider().addingTimeInterval(60)
                 logGameDetailPolling("stream event received event=snapshot publicGameId=\(liveState.publicGameId)")
                 guard let selectedGame = await resolveGameDetailSelection(for: identity) else {
@@ -3590,10 +3600,10 @@ final class AppModel {
     }
 
     // refreshAttendanceRecordsFromServer 메서드는 서버 직관 목록을 로컬 상태와 병합합니다.
-    func refreshAttendanceRecordsFromServer() async {
+    func refreshAttendanceRecordsFromServer(forceRefresh: Bool = false) async {
         guard attendanceSyncDisabled == false,
               attendanceListSyncInFlight == false,
-              attendanceListSyncSuppressed == false else {
+              (forceRefresh || attendanceListSyncSuppressed == false) else {
             return
         }
         guard let installationID = attendanceInstallationUUID() else {
@@ -3603,8 +3613,27 @@ final class AppModel {
         defer { attendanceListSyncInFlight = false }
 
         do {
-            let records = try await attendanceClient.fetchAttendanceRecords(installationID: installationID)
-            guard Task.isCancelled == false else { return }
+            let records: AttendanceRecords
+            while true {
+                // A list fetched before a write finishes can erase a confirmed mark or restore a removal.
+                for task in Array(inFlightAttendanceTasks.values) { await task.value }
+                try Task.checkCancellation()
+                guard attendanceSyncDisabled == false else { return }
+                if !inFlightAttendanceTasks.isEmpty { continue }
+                let generation = attendanceMutationGeneration
+                let fetched: AttendanceRecords
+                do {
+                    fetched = try await attendanceClient.fetchAttendanceRecords(installationID: installationID)
+                } catch {
+                    try Task.checkCancellation()
+                    if generation != attendanceMutationGeneration { continue }
+                    throw error
+                }
+                try Task.checkCancellation()
+                guard generation == attendanceMutationGeneration else { continue }
+                records = fetched
+                break
+            }
             let previousIDs = attendedGameIDs
             let rawCount = records.gameIDs.count
             setAttendedGameIDs(records.gameIDs)
@@ -3745,7 +3774,7 @@ final class AppModel {
     }
 #endif
 
-    // syncAttendanceChange 메서드는 optimistic update 결과를 백엔드에 반영하고 실패 시 롤백합니다.
+    // 서버 저장이 성공한 뒤에만 직관 기록을 화면에 반영합니다.
     private func syncAttendanceChange(
         game: GameDetail,
         databaseGameID: UUID,
@@ -3759,7 +3788,9 @@ final class AppModel {
             return
         }
         let gameID = databaseGameID
+        attendanceMutationGeneration += 1
         inFlightAttendanceTasks[gameID]?.cancel()
+        attendanceSyncFailureMessage = nil
         let client = attendanceClient
         inFlightAttendanceTasks[gameID] = Task { [weak self] in
             do {
@@ -3772,12 +3803,19 @@ final class AppModel {
                 )
                 await MainActor.run {
                     guard let self else { return }
+                    self.attendanceMutationGeneration += 1
                     self.setGameAttendance(gameID, isAttended: nextIsAttended)
+                    self.attendanceRecordGames = self.attendanceRecordGames.filter { self.attendanceDatabaseGameID(for: $0) != gameID }
+                    if nextIsAttended {
+                        self.attendanceRecordGames.append(game)
+                    }
                     self.persistAttendedGameKeys()
                     self.invalidateScheduleDerivedCaches()
                     self.attendanceSyncFailureMessage = nil
                     self.inFlightAttendanceTasks[gameID] = nil
                     self.attendanceSyncDisabled = false
+                    self.attendanceListSyncSuppressed = false
+                    self.lastAttendanceListFailureSignature = nil
                     #if DEBUG
                     let action = nextIsAttended ? "mark" : "unmark"
                     print("[Attendance] \(action) confirmed dbGameID=\(gameID.uuidString)")

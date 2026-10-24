@@ -10,6 +10,21 @@ struct AttendanceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     AppScreenHeader(title: "직관 기록", subtitle: "우리 팀과 함께한 나의 야구")
+                    if let message = appModel.attendanceSyncFailureMessage {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label(message, systemImage: "exclamationmark.triangle")
+                                .font(.subheadline)
+                            if appModel.isAttendanceSyncAvailable {
+                                Button("다시 불러오기") {
+                                    Task { await appModel.refreshAttendanceRecordsFromServer(forceRefresh: true) }
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .accessibilityIdentifier("attendance.retry")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .cardSurface(padding: 16, cornerRadius: 18)
+                    }
                     if appModel.settings.favoriteTeamID == nil {
                         EmptyStateView(systemImage: "person.crop.circle.badge.questionmark", title: "응원팀을 선택해주세요", message: "응원팀 경기의 직관 기록을 모아 보여드립니다.")
                     } else {
@@ -41,6 +56,7 @@ struct AttendanceView: View {
             .dashboardScreen()
             .navigationDestination(for: String.self) { GameDetailView(gameIdentity: $0) }
             .task { await appModel.refreshAttendanceRecordsFromServer() }
+            .refreshable { await appModel.refreshAttendanceRecordsFromServer(forceRefresh: true) }
         }
     }
 
