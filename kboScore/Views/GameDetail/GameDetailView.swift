@@ -59,7 +59,7 @@ struct GameDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
+        DashboardScrollView {
             if let game = viewModel.game {
                 let presentation = GameDetailPresentation(
                     game: game,
@@ -71,17 +71,24 @@ struct GameDetailView: View {
                     baseRunnerDisplay: viewModel.baseRunnerDisplay
                 )
                 VStack(alignment: .leading, spacing: 12) {
-                    GameStatusSummaryCard(presentation: presentation)
+                    DashboardColumns(allowsColumns: presentation.status != .cancelled, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            GameStatusSummaryCard(presentation: presentation)
 
-                    if presentation.status != .cancelled {
-                        actionButtons(for: game)
-                        if didRequestAttendanceChange, let message = appModel.attendanceSyncFailureMessage {
-                            Label(message + " 잠시 후 직관 버튼을 다시 눌러주세요.", systemImage: "exclamationmark.triangle")
-                                .font(.caption)
-                                .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                                .accessibilityIdentifier("attendance.saveError")
+                            if presentation.status != .cancelled {
+                                actionButtons(for: game)
+                                if didRequestAttendanceChange, let message = appModel.attendanceSyncFailureMessage {
+                                    Label(message + " 잠시 후 직관 버튼을 다시 눌러주세요.", systemImage: "exclamationmark.triangle")
+                                        .font(.caption)
+                                        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+                                        .accessibilityIdentifier("attendance.saveError")
+                                }
+                            }
                         }
-                        overviewSection(presentation: presentation)
+                    } secondary: {
+                        if presentation.status != .cancelled {
+                            overviewSection(presentation: presentation)
+                        }
                     }
                 }
                 .padding(.horizontal, 12)

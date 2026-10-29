@@ -69,28 +69,21 @@ struct ScheduleGameDetailRoute: Hashable {
 struct ScheduleView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var viewModel = ScheduleViewModel()
     @State private var postseason = HomePostseasonModel()
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if viewModel.isDisplayedMonthAvailable,
-                       let statusMessage = viewModel.statusMessage {
-                        DataStatusBannerView(message: statusMessage)
-                    }
-
-                    ScheduleCalendarCardView(
-                        viewModel: viewModel,
-                        postseasonGameAliases: Set(postseason.schedules.values.flatMap { $0 }.flatMap(\.gameIdentityAliases))
-                    )
-                    if let message = postseason.errorMessage {
-                        DataStatusBannerView(message: message)
+            GeometryReader { geometry in
+                let usesColumns = min(geometry.size.width, 1_120) >= 760 && !dynamicTypeSize.isAccessibilitySize
+                if usesColumns {
+                    scheduleContent(usesColumns: true)
+                } else {
+                    ScrollView {
+                        scheduleContent(usesColumns: false)
                     }
                 }
-                .padding(.horizontal, 22)
-                .padding(.bottom, 18)
             }
             .dashboardScreen()
             .refreshable {
@@ -122,6 +115,28 @@ struct ScheduleView: View {
         }
     }
 
+    private func scheduleContent(usesColumns: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if viewModel.isDisplayedMonthAvailable,
+               let statusMessage = viewModel.statusMessage {
+                DataStatusBannerView(message: statusMessage)
+            }
+
+            ScheduleCalendarCardView(
+                viewModel: viewModel,
+                postseasonGameAliases: Set(postseason.schedules.values.flatMap { $0 }.flatMap(\.gameIdentityAliases)),
+                usesColumns: usesColumns
+            )
+            if let message = postseason.errorMessage {
+                DataStatusBannerView(message: message)
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.bottom, 18)
+        .frame(maxWidth: 1_120)
+        .frame(maxWidth: .infinity, maxHeight: usesColumns ? .infinity : nil, alignment: .top)
+    }
+
     private var scheduleTaskID: String {
         "\(viewModel.scheduleFilter.rawValue)-\(appModel.settings.favoriteTeamID ?? "none")-\(viewModel.displayedMonthKey.yearMonthText)-\(appModel.schedulePostReconciliationRefreshGeneration)"
     }
@@ -151,6 +166,7 @@ private struct ScheduleCalendarCardView: View {
     @ScaledMetric(relativeTo: .caption) private var calendarDayWidth = 44.0
     @ObservedObject var viewModel: ScheduleViewModel
     let postseasonGameAliases: Set<String>
+    let usesColumns: Bool
 
     private let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
     var body: some View {
@@ -159,115 +175,24 @@ private struct ScheduleCalendarCardView: View {
             AppSegmentedControl(selection: $viewModel.scheduleFilter, options: ScheduleFilter.allCases.map { ($0, $0.rawValue) })
 
             if isDisplayedMonthAvailable {
-                VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    monthNavigationButton(systemName: "chevron.left", targetMonth: previousAvailableMonth)
+                if usesColumns {
+                    HStack(alignment: .top, spacing: 12) {
+                        // Keep the calendar independent; allow overflow on short windows.
+                        ScrollView {
+                            calendarContent
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .accessibilityIdentifier("schedule.calendarScroll")
 
-                    Spacer()
-
-                    VStack(spacing: 2) {
-                        Text(appModel.calendarMonthTitle(for: viewModel.displayedMonth))
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                        Text(viewModel.scheduleFilter == .myTeam ? (appModel.favoriteTeam?.displayName ?? monthSummaryText) : monthSummaryText)
-                            .font(.caption2)
-                            .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+                        ScrollView {
+                            selectedGamesContent
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .accessibilityIdentifier("schedule.gamesScroll")
                     }
-
-                    Spacer()
-
-                    monthNavigationButton(systemName: "chevron.right", targetMonth: nextAvailableMonth)
-                }
-
-                if dynamicTypeSize.isAccessibilitySize {
-                    ScrollView(.horizontal) {
-                        calendarGrid.frame(width: calendarDayWidth * 7 + 36)
-                    }
-                    Text("달력을 좌우로 밀어 날짜를 확인하세요.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 } else {
-                    calendarGrid
-                }
-
-                if viewModel.scheduleFilter == .myTeam {
-                    HStack(spacing: 14) {
-                        resultLegend("승", appearance: .win)
-                        resultLegend("패", appearance: .loss)
-                        resultLegend("무", appearance: .draw)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                }
-
-                if viewModel.isLoadingDisplayedMonth {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("공식 월간 일정 불러오는 중")
-                            .font(.caption)
-                            .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                    }
-                } else if let statusMessage = viewModel.statusMessage {
-                    Text(statusMessage)
-                        .font(.caption)
-                        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
-                }
-
-
-                Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1)
-                HStack {
-                    Text("오늘 \(Calendar.current.component(.day, from: Date()))일")
-                        .foregroundStyle(StadiumPalette.app.tint)
-                    Spacer()
-                    Text("날짜를 선택해 경기 확인").foregroundStyle(StadiumPalette.app.textSecondary)
-                }.font(.caption2)
-                }.cardSurface(padding: 16, cornerRadius: 22)
-
-                switch viewModel.selectedGamesContentState {
-                case .initialLoading:
-                    ScheduleLoadingPlaceholderView(
-                        title: selectedDayTitle,
-                        message: "일정을 불러오는 중입니다"
-                    )
-                case .loadedEmpty:
-                    EmptyStateView(
-                        systemImage: "calendar",
-                        title: selectedDayTitle,
-                        message: emptyMessage
-                    )
-                case .loaded:
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(selectedDayTitle)
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
-                            Spacer()
-                            Text("경기 \(selectedGames.count)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? appModel.currentTheme.accent)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    appModel.favoriteStadiumPalette?.winDayFill ?? appModel.currentTheme.chipBackground,
-                                    in: Capsule()
-                                )
-                        }
-
-                        ForEach(selectedGames) { game in
-                            NavigationLink(value: ScheduleGameDetailRoute(game: game)) {
-                                ScheduleGameRow(
-                                    game: game,
-                                    favoriteTeamID: appModel.settings.favoriteTeamID,
-                                    filter: viewModel.scheduleFilter,
-                                    postseasonGameAliases: postseasonGameAliases,
-                                    onAttendanceToggle: {
-                                        appModel.toggleGameAttendance(for: game)
-                                    }
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                    calendarContent
+                    selectedGamesContent
                 }
             } else if viewModel.isLoadingDisplayedMonth {
                 ScheduleLoadingPlaceholderView(
@@ -291,6 +216,122 @@ private struct ScheduleCalendarCardView: View {
             }
         }
 
+    }
+
+    private var calendarContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                monthNavigationButton(systemName: "chevron.left", targetMonth: previousAvailableMonth)
+
+                Spacer()
+
+                VStack(spacing: 2) {
+                    Text(appModel.calendarMonthTitle(for: viewModel.displayedMonth))
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
+                    Text(viewModel.scheduleFilter == .myTeam ? (appModel.favoriteTeam?.displayName ?? monthSummaryText) : monthSummaryText)
+                        .font(.caption2)
+                        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+                }
+
+                Spacer()
+
+                monthNavigationButton(systemName: "chevron.right", targetMonth: nextAvailableMonth)
+            }
+
+            if dynamicTypeSize.isAccessibilitySize {
+                ScrollView(.horizontal) {
+                    calendarGrid.frame(width: calendarDayWidth * 7 + 36)
+                }
+                Text("달력을 좌우로 밀어 날짜를 확인하세요.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                calendarGrid
+            }
+
+            if viewModel.scheduleFilter == .myTeam {
+                HStack(spacing: 14) {
+                    resultLegend("승", appearance: .win)
+                    resultLegend("패", appearance: .loss)
+                    resultLegend("무", appearance: .draw)
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            if viewModel.isLoadingDisplayedMonth {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("공식 월간 일정 불러오는 중")
+                        .font(.caption)
+                        .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+                }
+            } else if let statusMessage = viewModel.statusMessage {
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(appModel.favoriteStadiumPalette?.textSecondary ?? .secondary)
+            }
+
+
+            Rectangle().fill(StadiumPalette.app.ghostBorder).frame(height: 1)
+            HStack {
+                Text("오늘 \(Calendar.current.component(.day, from: Date()))일")
+                    .foregroundStyle(StadiumPalette.app.tint)
+                Spacer()
+                Text("날짜를 선택해 경기 확인").foregroundStyle(StadiumPalette.app.textSecondary)
+            }.font(.caption2)
+        }.cardSurface(padding: 16, cornerRadius: 22)
+    }
+
+    @ViewBuilder
+    private var selectedGamesContent: some View {
+        switch viewModel.selectedGamesContentState {
+        case .initialLoading:
+            ScheduleLoadingPlaceholderView(
+                title: selectedDayTitle,
+                message: "일정을 불러오는 중입니다"
+            )
+        case .loadedEmpty:
+            EmptyStateView(
+                systemImage: "calendar",
+                title: selectedDayTitle,
+                message: emptyMessage
+            )
+        case .loaded:
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(selectedDayTitle)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? .primary)
+                    Spacer()
+                    Text("경기 \(selectedGames.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(appModel.favoriteStadiumPalette?.textPrimary ?? appModel.currentTheme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            appModel.favoriteStadiumPalette?.winDayFill ?? appModel.currentTheme.chipBackground,
+                            in: Capsule()
+                        )
+                }
+
+                ForEach(selectedGames) { game in
+                    NavigationLink(value: ScheduleGameDetailRoute(game: game)) {
+                        ScheduleGameRow(
+                            game: game,
+                            favoriteTeamID: appModel.settings.favoriteTeamID,
+                            filter: viewModel.scheduleFilter,
+                            postseasonGameAliases: postseasonGameAliases,
+                            onAttendanceToggle: {
+                                appModel.toggleGameAttendance(for: game)
+                            }
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     private var calendarDays: [MyTeamCalendarDay] {

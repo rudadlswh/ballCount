@@ -103,6 +103,33 @@ struct PostseasonBracketTests {
         }
     }
 
+    @Test func officialRainCancellationOverridesPreviewAndScores() throws {
+        var object = try #require(JSONSerialization.jsonObject(with: fixtureData()) as? [String: Any])
+        let rows = try #require(object["rows"] as? [[String: Any]])
+        var cells = try #require(rows[0]["row"] as? [[String: Any]])
+        cells[0]["Text"] = "10.25(일)"
+        cells[1]["Text"] = "<b>14:00</b>"
+        cells[3]["Text"] = "<a href='/Schedule/GameCenter/Main.aspx?gameDate=20261025&gameId=20261025HTSS0&section=START_PIT'>프리뷰</a>"
+        cells[7]["Text"] = "대구"
+        cells[8]["Text"] = "<span>우천취소</span>"
+        for scoreHTML in ["<span>vs</span>", "<span>0</span><span>vs</span><span>0</span>"] {
+            cells[2]["Text"] = "<span>KIA</span><em>\(scoreHTML)</em><span>삼성</span>"
+            object["rows"] = [["row": cells]]
+            let payload = try KBOExternalResponseAdapter.normalize(data: JSONSerialization.data(withJSONObject: object))
+            let dto = try #require(payload.games.first)
+            #expect(dto.statusCode == "CANCELLED")
+            #expect(dto.statusText == "우천취소")
+            let games = KBODataMapper.mapGames(payload.games, teams: payload.teams.map(KBODataMapper.mapTeam))
+            let cancelled = try #require(games.first)
+            #expect(cancelled.providerGameID == "20261025HTSS0")
+            #expect(cancelled.awayTeam.id == "kia")
+            #expect(cancelled.homeTeam.id == "samsung")
+            #expect(cancelled.status == .cancelled)
+            let stale = game(away: "kia", home: "samsung", status: .upcoming, providerID: "20261025HTSS0")
+            #expect(make([.playoff: games], live: [stale]).series[2].games.first?.status == .cancelled)
+        }
+    }
+
     @Test func regularScheduleFinalResultsRemainFinal() throws {
         let payload = try KBOExternalResponseAdapter.normalize(data: fixtureData(named: "2026-kbo-official-schedule-list-202603"))
         #expect(payload.games.filter { $0.statusCode == "FINAL" }.count == 4)

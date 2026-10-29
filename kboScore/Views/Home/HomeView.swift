@@ -18,7 +18,7 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            DashboardScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     AppScreenHeader(title: "볼카운트", subtitle: "오늘도, \(appModel.favoriteTeam?.identity.displayName ?? "야구")와 함께")
                     favoriteTeamMenu
@@ -29,36 +29,43 @@ struct HomeView: View {
                         HomePostseasonBracketView(bracket: bracket, favoriteTeamID: appModel.settings.favoriteTeamID)
                     }
                     if let message = postseason.errorMessage { DataStatusBannerView(message: message) }
-                    if appModel.isLoading && appModel.games.isEmpty {
-                        ProgressView("경기를 불러오는 중")
-                            .frame(maxWidth: .infinity, minHeight: 200)
-                    } else if let message = appModel.loadErrorMessage, appModel.games.isEmpty {
-                        ContentUnavailableView {
-                            Label("경기를 불러오지 못했습니다", systemImage: "wifi.exclamationmark")
-                        } description: { Text(message) } actions: {
-                            Button("다시 시도") { Task { await appModel.refreshHome() } }
-                        }
-                    } else {
-                        gameSection
-                    }
-                    if let snapshot = appModel.standingsSnapshots.first(where: { $0.team.id == appModel.settings.favoriteTeamID }) {
-                        seasonSummary(snapshot)
-                    }
-                    if let nextGame {
-                        NavigationLink(value: nextGame) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "calendar").foregroundStyle(StadiumPalette.app.textSecondary)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("다음 경기 · \(nextGame.awayTeam.identity.shortLabel) vs \(nextGame.homeTeam.identity.shortLabel)")
-                                        .font(.subheadline.weight(.semibold))
-                                    Text("\(nextGame.scheduledStart.formatted(.dateTime.month().day().hour().minute())) · \(nextGame.venue)")
-                                        .font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                    DashboardColumns {
+                        VStack(alignment: .leading, spacing: 18) {
+                            if appModel.isLoading && appModel.games.isEmpty {
+                                ProgressView("경기를 불러오는 중")
+                                    .frame(maxWidth: .infinity, minHeight: 200)
+                            } else if let message = appModel.loadErrorMessage, appModel.games.isEmpty {
+                                ContentUnavailableView {
+                                    Label("경기를 불러오지 못했습니다", systemImage: "wifi.exclamationmark")
+                                } description: { Text(message) } actions: {
+                                    Button("다시 시도") { Task { await appModel.refreshHome() } }
                                 }
-                                Spacer(minLength: 0)
-                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                            } else {
+                                gameSection
                             }
-                            .cardSurface(padding: 16, cornerRadius: 16)
-                        }.buttonStyle(.plain)
+                        }
+                    } secondary: {
+                        VStack(alignment: .leading, spacing: 18) {
+                            if let snapshot = appModel.standingsSnapshots.first(where: { $0.team.id == appModel.settings.favoriteTeamID }) {
+                                seasonSummary(snapshot)
+                            }
+                            if let nextGame {
+                                NavigationLink(value: nextGame) {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "calendar").foregroundStyle(StadiumPalette.app.textSecondary)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("다음 경기 · \(nextGame.awayTeam.identity.shortLabel) vs \(nextGame.homeTeam.identity.shortLabel)")
+                                                .font(.subheadline.weight(.semibold))
+                                            Text("\(nextGame.scheduledStart.formatted(.dateTime.month().day().hour().minute())) · \(nextGame.venue)")
+                                                .font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(StadiumPalette.app.textSecondary)
+                                    }
+                                    .cardSurface(padding: 16, cornerRadius: 16)
+                                }.buttonStyle(.plain)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 22)

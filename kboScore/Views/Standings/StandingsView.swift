@@ -23,8 +23,11 @@ struct StandingsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                standingsContent
+            GeometryReader { geometry in
+                let isExpanded = min(geometry.size.width, 1_120) >= 760 && !dynamicTypeSize.isAccessibilitySize
+                DashboardScrollView {
+                    standingsContent(isExpanded: isExpanded)
+                }
             }
             .dashboardScreen()
             .task(id: appModel.selectedTab) {
@@ -40,7 +43,7 @@ struct StandingsView: View {
         }
     }
 
-    private var standingsContent: some View {
+    private func standingsContent(isExpanded: Bool) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             AppScreenHeader(title: "순위", subtitle: "우리 팀의 오늘을 한눈에")
             if let favorite = appModel.standingsSnapshots.first(where: { $0.team.id == appModel.settings.favoriteTeamID }) {
@@ -74,10 +77,11 @@ struct StandingsView: View {
                     message: "현재 데이터에서 시범경기를 제외한 정규시즌 종료 경기를 찾지 못했습니다."
                 )
             case let .table(rows, revision, favoriteTeamID):
-                standingsTable(rows: rows, revision: revision, favoriteTeamID: favoriteTeamID)
+                standingsTable(rows: rows, revision: revision, favoriteTeamID: favoriteTeamID,
+                               textScale: tableTextScale * (isExpanded ? 15.0 / 13.0 : 1))
             }
         }
-        .padding(.horizontal, 22)
+        .padding(.horizontal, isExpanded ? 12 : 22)
         .padding(.bottom, 18)
     }
 
@@ -116,66 +120,76 @@ struct StandingsView: View {
     private func standingsTable(
         rows: [TeamStandingsSnapshot],
         revision: Int,
-        favoriteTeamID: String?
+        favoriteTeamID: String?,
+        textScale: CGFloat
     ) -> some View {
 #if DEBUG
         let _ = Self.logVisibleRows(rows, revision: revision)
 #endif
 
-        let metrics = StandingsTableMetrics(textScale: tableTextScale)
+        let metrics = StandingsTableMetrics(textScale: textScale)
         let leaderSnapshot = rows.first
 
-        return Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                ScrollView(.horizontal) {
-                    tableRows(rows, leader: leaderSnapshot, favoriteTeamID: favoriteTeamID, metrics: metrics)
-                        .frame(width: metrics.width)
-                        .padding(.bottom, 8)
-                }
-                .accessibilityIdentifier("standingsTable")
-                .accessibilityLabel("팀 순위표")
-                .accessibilityHint("좌우로 스크롤해 모든 기록을 확인할 수 있습니다")
-            } else {
-                GeometryReader { proxy in
-                    let metrics = StandingsTableMetrics(textScale: tableTextScale, availableWidth: proxy.size.width)
+        return GeometryReader { proxy in
+            let fitsWithoutScrolling = !dynamicTypeSize.isAccessibilitySize && proxy.size.width >= metrics.width
+            let fittedMetrics = StandingsTableMetrics(textScale: textScale, availableWidth: proxy.size.width)
+            Group {
+                if fitsWithoutScrolling {
+                    tableRows(rows, leader: leaderSnapshot, favoriteTeamID: favoriteTeamID, metrics: fittedMetrics)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("standingsTable")
+                        .accessibilityLabel("팀 순위표")
+                } else if dynamicTypeSize.isAccessibilitySize {
+                    ScrollView(.horizontal) {
+                        tableRows(rows, leader: leaderSnapshot, favoriteTeamID: favoriteTeamID, metrics: metrics)
+                            .frame(width: metrics.width)
+                            .padding(.bottom, 8)
+                    }
+                    .accessibilityIdentifier("standingsTable")
+                    .accessibilityLabel("팀 순위표")
+                    .accessibilityHint("좌우로 스크롤해 모든 기록을 확인할 수 있습니다")
+                } else {
                     ZStack(alignment: .topLeading) {
-                        tableRows(rows, leader: leaderSnapshot, favoriteTeamID: favoriteTeamID, metrics: metrics, showsStats: false)
+                        tableRows(rows, leader: leaderSnapshot, favoriteTeamID: favoriteTeamID, metrics: fittedMetrics, showsStats: false)
 
                         HStack(spacing: 0) {
                             Color.clear
-                                .frame(width: metrics.pinnedWidth)
+                                .frame(width: fittedMetrics.pinnedWidth)
                                 .allowsHitTesting(false)
 
                             ScrollView(.horizontal) {
                                 VStack(spacing: 0) {
-                                    StandingsStatsHeader(metrics: metrics)
+                                    StandingsStatsHeader(metrics: fittedMetrics)
                                     ForEach(rows) { snapshot in
-                                        StandingsStatsCells(snapshot: snapshot, leader: leaderSnapshot, metrics: metrics)
-                                            .frame(height: metrics.rowHeight)
+                                        StandingsStatsCells(snapshot: snapshot, leader: leaderSnapshot, metrics: fittedMetrics)
+                                            .frame(height: fittedMetrics.rowHeight)
                                             .accessibilityHidden(true)
                                     }
                                 }
-                                .padding(.trailing, metrics.horizontalPadding)
-                                .frame(width: metrics.statsContentWidth)
+                                .padding(.trailing, fittedMetrics.horizontalPadding)
+                                .frame(width: fittedMetrics.statsContentWidth)
                                 .padding(.bottom, 8)
                             }
-                            .frame(width: max(0, proxy.size.width - metrics.pinnedWidth))
+                            .frame(width: max(0, proxy.size.width - fittedMetrics.pinnedWidth))
                             .accessibilityIdentifier("standingsStatsScroll")
                             .accessibilityLabel("팀별 기록")
                             .accessibilityHint("좌우로 스크롤해 모든 기록을 확인할 수 있습니다")
                         }
                     }
                 }
-                .frame(height: CGFloat(rows.count + 1) * metrics.rowHeight + 8)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .overlay(alignment: .bottomTrailing) {
+                if !fitsWithoutScrolling {
+                    Text("← 기록을 옆으로 넘겨보세요 →")
+                        .font(.caption2).foregroundStyle(StadiumPalette.app.textSecondary)
+                        .offset(y: 22)
+                }
             }
         }
-        .font(.system(size: 13 * tableTextScale, weight: .medium))
+        .frame(height: CGFloat(rows.count + 1) * metrics.rowHeight + 8)
+        .font(.system(size: 13 * textScale, weight: .medium))
         .cardSurface(padding: 4, cornerRadius: 18)
-        .overlay(alignment: .bottomTrailing) {
-            Text("← 기록을 옆으로 넘겨보세요 →")
-                .font(.caption2).foregroundStyle(StadiumPalette.app.textSecondary)
-                .offset(y: 18)
-        }
         .padding(.bottom, 18)
     }
 

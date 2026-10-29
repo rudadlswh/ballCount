@@ -26,7 +26,7 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var model = appModel
         NavigationStack {
-            ScrollView {
+            DashboardScrollView(maximumWidth: 760) {
                 VStack(alignment: .leading, spacing: 18) {
                     AppScreenHeader(title: "설정", subtitle: "응원도, 화면도 나에게 맞게")
                     NavigationLink {
