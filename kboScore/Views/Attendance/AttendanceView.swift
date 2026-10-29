@@ -7,7 +7,7 @@ struct AttendanceView: View {
     var body: some View {
         let dashboard = appModel.attendanceDashboard
         NavigationStack {
-            ScrollView {
+            DashboardScrollView(maximumWidth: 760) {
                 VStack(alignment: .leading, spacing: 16) {
                     AppScreenHeader(title: "직관 기록", subtitle: "우리 팀과 함께한 나의 야구")
                     if let message = appModel.attendanceSyncFailureMessage {

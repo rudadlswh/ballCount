@@ -52,7 +52,7 @@ final class LandscapeLayoutTests: XCTestCase {
             app.buttons["favoriteTeamSelection"].tap()
             let row = app.buttons.containing(.staticText, identifier: team).firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 10))
-            for _ in 0..<6 where !row.isHittable || row.frame.maxY >= app.tabBars.buttons["홈"].frame.minY {
+            for _ in 0..<6 where !row.isHittable || row.frame.intersects(app.tabBars.firstMatch.frame) {
                 app.scrollViews.firstMatch.swipeUp()
             }
             row.tap()
@@ -71,21 +71,32 @@ final class LandscapeLayoutTests: XCTestCase {
         XCTAssertEqual(colors[1], colors[2])
     }
 
-    @MainActor func testStandingsKeepsTeamColumnFixedWhileStatsScroll() throws {
+    @MainActor func testStandingsUsesAvailableWidthOrKeepsTeamColumnFixed() throws {
         let app = launchApp()
         app.tabBars.buttons["순위"].tap()
         let teamHeader = app.staticTexts["팀"]
         let statsScroll = app.scrollViews["standingsStatsScroll"]
-        let statsHeader = statsScroll.staticTexts["승률"]
         XCTAssertTrue(teamHeader.waitForExistence(timeout: 60))
-        XCTAssertTrue(statsHeader.exists)
-        XCTAssertLessThan(teamHeader.frame.maxX, statsScroll.frame.minX)
-        let teamX = teamHeader.frame.minX
-        let statsX = statsHeader.frame.minX
-        statsScroll.swipeLeft()
-        XCTAssertEqual(teamHeader.frame.minX, teamX, accuracy: 1)
-        XCTAssertLessThan(statsHeader.frame.minX, statsX - 10)
-        attach("순위-가로스크롤")
+        if statsScroll.exists {
+            let statsHeader = statsScroll.staticTexts["승률"]
+            XCTAssertTrue(statsHeader.exists)
+            XCTAssertLessThan(teamHeader.frame.maxX, statsScroll.frame.minX)
+            let teamX = teamHeader.frame.minX
+            let statsX = statsHeader.frame.minX
+            statsScroll.swipeLeft()
+            XCTAssertEqual(teamHeader.frame.minX, teamX, accuracy: 1)
+            XCTAssertLessThan(statsHeader.frame.minX, statsX - 10)
+            attach("순위-가로스크롤")
+        } else {
+            for title in ["순위", "팀", "경기", "승", "패", "무", "승률", "게임차", "연속"] {
+                let header = app.staticTexts[title].firstMatch
+                XCTAssertTrue(header.exists)
+                XCTAssertGreaterThanOrEqual(header.frame.minX, app.frame.minX)
+                XCTAssertLessThanOrEqual(header.frame.maxX, app.frame.maxX)
+            }
+            XCTAssertFalse(app.staticTexts["← 기록을 옆으로 넘겨보세요 →"].exists)
+            attach("순위-전체기록")
+        }
     }
 
     @MainActor func testStandingsComparisonSelectsAndChangesTwoTeams() throws {
@@ -123,10 +134,8 @@ final class LandscapeLayoutTests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         for orientation in [UIDeviceOrientation.landscapeLeft, .landscapeRight, .portrait] {
             XCUIDevice.shared.orientation = orientation
-            let rotation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                (app.frame.width > app.frame.height) == (orientation != .portrait)
-            }, object: nil)
-            wait(for: [rotation], timeout: 10)
+            // The inner display can resize independently of interface orientation.
+            XCTAssertTrue(app.tabBars.buttons["홈"].waitForExistence(timeout: 10))
             for tab in ["home", "standings", "schedule", "attendance", "settings"] {
                 let button = tabButton(tab, in: app)
                 XCTAssertTrue(button.isHittable)
@@ -137,7 +146,10 @@ final class LandscapeLayoutTests: XCTestCase {
                 if !bell.isHittable { app.scrollViews.firstMatch.swipeDown() }
                 XCTAssertTrue(bell.isHittable)
                 XCTAssertGreaterThanOrEqual(bell.frame.minY, app.frame.minY)
-                XCTAssertLessThan(bell.frame.maxY, button.frame.minY)
+                XCTAssertLessThanOrEqual(bell.frame.maxY, app.frame.maxY)
+                XCTAssertGreaterThanOrEqual(bell.frame.minX, app.frame.minX)
+                XCTAssertLessThanOrEqual(bell.frame.maxX, app.frame.maxX)
+                XCTAssertFalse(bell.frame.intersects(button.frame))
                 attach("\(tab)-회전-\(orientation.rawValue)")
             }
         }
@@ -153,13 +165,15 @@ final class LandscapeLayoutTests: XCTestCase {
             XCTAssertTrue(table.waitForExistence(timeout: 60))
             let team = table.staticTexts["팀"]
             for _ in 0..<8 {
-                let bottom = app.tabBars.buttons["홈"].frame.minY - 20
-                if team.frame.minY > 60 && team.frame.maxY < bottom { break }
-                let startY = (60 + bottom) / 2
-                let desiredY = max(90, app.frame.height * 0.2)
-                let endY = min(bottom - 10, max(70, startY + desiredY - team.frame.midY))
-                app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: startY))
-                    .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: endY)))
+                let viewport = app.scrollViews.firstMatch.frame.intersection(app.frame)
+                let top = viewport.minY + 20
+                let bottom = viewport.maxY - 20
+                if team.frame.minY > top && team.frame.maxY < bottom { break }
+                let startY = (top + bottom) / 2
+                let desiredY = top + viewport.height * 0.2
+                let endY = min(bottom - 10, max(top + 10, startY + desiredY - team.frame.midY))
+                app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: viewport.midX, dy: startY))
+                    .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: viewport.midX, dy: endY)))
             }
             for _ in 0..<8 where !table.staticTexts["연속"].isHittable {
                 let y = team.frame.midY - app.frame.minY

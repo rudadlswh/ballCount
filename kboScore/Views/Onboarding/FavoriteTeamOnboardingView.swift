@@ -108,6 +108,8 @@ struct FavoriteTeamOnboardingView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 20)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity)
             .background(KBOLivePalette.background.ignoresSafeArea())
             .navigationTitle("환영합니다")
             .navigationBarTitleDisplayMode(.inline)

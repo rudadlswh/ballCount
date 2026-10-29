@@ -41,7 +41,7 @@ struct StandingsTableMetrics {
     }
 
     private var statsScale: CGFloat {
-        max(1, (availableWidth - pinnedWidth - spacing * 6 - horizontalPadding) / (254 * textScale))
+        max(1, (availableWidth - pinnedWidth - spacing * 6 - horizontalPadding) / (258 * textScale))
     }
 
     var statsContentWidth: CGFloat {
