@@ -547,9 +547,11 @@ enum KBOExternalResponseAdapter {
         let scheduledStart = combineDate(dateText: gameLink.gameDate, timeText: timeText) ?? .distantPast
         let venueIndex = max(cells.count - 2, 0)
         let venueText = (element(at: venueIndex, in: cells) as? [String: Any]).flatMap { strippedHTML(from: stringValue(for: ["Text"], in: $0)) }
+        let noteText = (cells.last as? [String: Any]).flatMap { strippedHTML(from: stringValue(for: ["Text"], in: $0)) }
         let hasScores = teamsAndScores.awayScore != nil && teamsAndScores.homeScore != nil
         // Scores alone can be live; only a review link confirms the final result.
         let isFinal = hasScores && (relayHTML?.lowercased().contains("section=review") == true)
+        let gameState = isFinal ? "3" : (hasScores ? "2" : "1")
 
         let game = KBOGameDTO(
             id: GameIdentifier.uuid(from: gameLink.gameID) ?? UUID(),
@@ -560,8 +562,8 @@ enum KBOExternalResponseAdapter {
             homeTeamID: homeTeam.id,
             awayScore: teamsAndScores.awayScore,
             homeScore: teamsAndScores.homeScore,
-            statusCode: isFinal ? "FINAL" : (hasScores ? "LIVE" : "UPCOMING"),
-            statusText: isFinal ? "경기 종료" : (hasScores ? "경기 중" : "경기 예정"),
+            statusCode: normalizedOfficialStatusCode(gameState: gameState, cancelName: noteText),
+            statusText: normalizedOfficialStatusText(gameState: gameState, cancelName: noteText),
             inningText: nil,
             bases: nil,
             outs: nil,
